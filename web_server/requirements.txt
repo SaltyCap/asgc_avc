@@ -13,16 +13,10 @@ wsproto==1.2.0
 # Speech Recognition
 vosk==0.3.45
 
-# Scientific Computing
+# Scientific Computing (required by vosk)
 numpy==2.3.3
 
-# GPIO/Hardware
-RPi.GPIO==0.7.1
-gpiozero==2.0.1
-pigpio==1.78
-lgpio==0.2.2.0
-rpi-lgpio==0.6
-colorzero==2.0
+# I2C Communication (for motor control via C code)
 smbus2==0.5.0
 
 # HTTP/Networking
@@ -42,7 +36,7 @@ itsdangerous==2.2.0
 tqdm==4.67.1
 srt==3.5.3
 
-# Template Engine
+# Template Engine (Flask dependency)
 Jinja2==3.1.6
 MarkupSafe==3.0.2
 
