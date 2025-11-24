@@ -1,0 +1,40 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+.Python
+venv/
+env/
+.env
+
+# Virtual environments (all locations)
+**/venv/
+**/.venv*/
+archive/.venv.old/
+
+# Vosk model (large files)
+web_server/model/
+
+# SSL certificates (sensitive)
+*.pem
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Build artifacts
+*.o
+*.so
+c_code/build/
+
+# Claude settings
+.claude/
+
+# Archive old files
+web_server/archive/

@@ -1,0 +1,99 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+    <title>ASGC Voice Control</title>
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}">
+</head>
+<body>
+    <div class="connection-status">
+        <div class="status-dot" id="statusDot"></div>
+        <span id="statusText">Connecting...</span>
+    </div>
+
+    <div class="container">
+        <div class="header">
+            <div class="logo">ASGC Voice Control</div>
+            <div class="subtitle">Arkansas Space Grant Commission</div>
+        </div>
+
+        <!-- Command Center Section -->
+        <div class="section">
+            <div class="section-title">🎛️ Command Center</div>
+
+            <!-- Control Buttons Row -->
+            <div class="control-row">
+                <div class="control-group">
+                    <span class="control-label">Voice:</span>
+                    <button id="voiceStartButton" class="control-button start-btn">Start</button>
+                    <button id="voiceStopButton" class="control-button stop-btn">Stop</button>
+                    <span class="status-indicator" id="voiceStatusDot"></span>
+                </div>
+                <div class="control-group">
+                    <span class="control-label">Queue:</span>
+                    <button id="carStartButton" class="control-button start-btn">Start</button>
+                    <button id="carStopButton" class="control-button stop-btn">Stop</button>
+                    <span class="status-indicator" id="carStatusDot"></span>
+                </div>
+            </div>
+
+            <!-- Status Display -->
+            <div class="status-row">
+                <span id="voiceStatusText">Connecting...</span>
+                <span class="status-divider">|</span>
+                <span id="carStatusText">Queue: Stopped</span>
+            </div>
+
+            <!-- Transcript -->
+            <div id="transcript-container">
+                <p id="transcript"><em>Transcribed text will appear here...</em></p>
+            </div>
+
+            <!-- Command Queue -->
+            <div class="queue-header">
+                <span class="queue-status" id="queueStatus">Idle</span>
+            </div>
+            <div class="queue-slots">
+                <div class="queue-slot" id="slot0">
+                    <span class="slot-number">1</span>
+                    <span class="slot-label">---</span>
+                </div>
+                <div class="queue-slot" id="slot1">
+                    <span class="slot-number">2</span>
+                    <span class="slot-label">---</span>
+                </div>
+                <div class="queue-slot" id="slot2">
+                    <span class="slot-number">3</span>
+                    <span class="slot-label">---</span>
+                </div>
+                <div class="queue-slot" id="slot3">
+                    <span class="slot-number">4</span>
+                    <span class="slot-label">---</span>
+                </div>
+                <div class="queue-slot" id="slot4">
+                    <span class="slot-number">5</span>
+                    <span class="slot-label">---</span>
+                </div>
+            </div>
+            <div class="queue-buttons">
+                <button id="clearQueueBtn" class="queue-btn clear-queue-btn">CLEAR</button>
+                <button id="resetPosBtn" class="queue-btn reset-queue-btn">RESET</button>
+            </div>
+            <p class="queue-hint">Say colors to queue | Voice: "start", "stop", "clear"</p>
+        </div>
+
+        <!-- Navigation Buttons -->
+        <div class="nav-buttons">
+            <a href="/joystick" class="nav-button joystick-btn">🎮 Joystick</a>
+            <a href="/course" class="nav-button course-btn">🗺️ Course</a>
+        </div>
+
+        <div class="footer">
+            Powered by Vosk Speech Recognition
+        </div>
+    </div>
+
+    <script src="{{ url_for('static', filename='js/main.js') }}"></script>
+</body>
+</html>

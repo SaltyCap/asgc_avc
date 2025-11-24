@@ -1,0 +1,458 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+    <title>Course View</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            min-height: 100vh;
+            background: linear-gradient(135deg, #1e3c72 0%, #2a5298 50%, #7e22ce 100%);
+            color: #fff;
+            padding: 15px;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+        }
+
+        .header {
+            text-align: center;
+            margin-bottom: 15px;
+            width: 100%;
+        }
+
+        .title {
+            font-size: 1.5rem;
+            font-weight: 700;
+            color: #fff;
+        }
+
+        .canvas-container {
+            width: 100%;
+            max-width: 500px;
+            aspect-ratio: 1 / 1;
+            background: rgba(255, 255, 255, 0.1);
+            backdrop-filter: blur(10px);
+            border-radius: 16px;
+            padding: 10px;
+            border: 1px solid rgba(255, 255, 255, 0.2);
+        }
+
+        #courseCanvas {
+            width: 100%;
+            height: 100%;
+            display: block;
+            border-radius: 8px;
+        }
+
+        .status-bar {
+            display: flex;
+            justify-content: center;
+            gap: 20px;
+            margin: 15px 0;
+            flex-wrap: wrap;
+            font-size: 0.9rem;
+        }
+
+        .status-item {
+            background: rgba(255, 255, 255, 0.1);
+            padding: 8px 15px;
+            border-radius: 8px;
+        }
+
+        .status-item strong {
+            color: #60a5fa;
+        }
+
+        .stop-button {
+            width: 100%;
+            max-width: 300px;
+            padding: 20px 40px;
+            background: rgba(239, 68, 68, 0.4);
+            border: 2px solid rgba(239, 68, 68, 0.7);
+            border-radius: 12px;
+            color: white;
+            font-size: 1.5rem;
+            font-weight: 700;
+            cursor: pointer;
+            transition: all 0.2s ease;
+            margin-top: 10px;
+        }
+
+        .stop-button:hover {
+            background: rgba(239, 68, 68, 0.6);
+        }
+
+        .stop-button:active {
+            transform: scale(0.98);
+            background: rgba(239, 68, 68, 0.8);
+        }
+
+        .nav-buttons {
+            display: flex;
+            justify-content: center;
+            gap: 20px;
+            margin: 20px 0 10px 0;
+        }
+
+        .nav-button {
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            width: 140px;
+            height: 50px;
+            border-radius: 25px;
+            border: none;
+            color: white;
+            cursor: pointer;
+            font-size: 1rem;
+            font-weight: 600;
+            box-shadow: 0 4px 20px rgba(0, 0, 0, 0.3);
+            transition: all 0.3s ease;
+            text-decoration: none;
+        }
+
+        .nav-button:active {
+            transform: scale(0.95);
+        }
+
+        .home-btn {
+            background: linear-gradient(135deg, #10b981 0%, #059669 100%);
+        }
+
+        .home-btn:hover {
+            box-shadow: 0 6px 25px rgba(16, 185, 129, 0.5);
+        }
+
+        .joystick-btn {
+            background: linear-gradient(135deg, #8b5cf6 0%, #7c3aed 100%);
+        }
+
+        .joystick-btn:hover {
+            box-shadow: 0 6px 25px rgba(139, 92, 246, 0.5);
+        }
+
+        .connection-status {
+            position: fixed;
+            top: 20px;
+            right: 20px;
+            padding: 8px 16px;
+            background: rgba(0, 0, 0, 0.5);
+            backdrop-filter: blur(10px);
+            border-radius: 8px;
+            font-size: 0.85rem;
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            z-index: 1000;
+        }
+
+        .connection-status .status-dot {
+            width: 10px;
+            height: 10px;
+            border-radius: 50%;
+            background: #ef4444;
+        }
+
+        .connection-status .status-dot.connected {
+            background: #22c55e;
+        }
+    </style>
+</head>
+<body>
+    <div class="connection-status">
+        <div class="status-dot" id="statusDot"></div>
+        <span id="connStatus">Connecting...</span>
+    </div>
+
+    <div class="header">
+        <div class="title">Course View</div>
+    </div>
+
+    <div class="canvas-container">
+        <canvas id="courseCanvas"></canvas>
+    </div>
+
+    <div class="status-bar">
+        <div class="status-item">
+            <strong>Pos:</strong> <span id="position">--</span>
+        </div>
+        <div class="status-item">
+            <strong>Heading:</strong> <span id="heading">--</span>
+        </div>
+        <div class="status-item">
+            <strong>Mode:</strong> <span id="mode">--</span>
+        </div>
+    </div>
+
+    <button class="stop-button" id="stopBtn">STOP</button>
+
+    <div class="nav-buttons">
+        <a href="/" class="nav-button home-btn">🏠 Home</a>
+        <a href="/joystick" class="nav-button joystick-btn">🎮 Joystick</a>
+    </div>
+
+    <script>
+        const canvas = document.getElementById('courseCanvas');
+        const ctx = canvas.getContext('2d');
+        const stopBtn = document.getElementById('stopBtn');
+        const connStatus = document.getElementById('connStatus');
+        const statusDot = document.getElementById('statusDot');
+
+        // Course configuration
+        const BORDER = 2.5;
+        const PLAY_AREA = 30;
+        let courseConfig = {
+            dimensions: { width: PLAY_AREA, height: PLAY_AREA },
+            border: BORDER,
+            playArea: PLAY_AREA,
+            buckets: {
+                red: [0, 0],
+                yellow: [0, 30],
+                blue: [30, 30],
+                green: [30, 0]
+            },
+            center: [15, 15],
+            start_position: [0, 15]
+        };
+
+        // Robot state
+        let robotState = {
+            x: 0,
+            y: 15,
+            heading: 90,
+            mode: 'idle',
+            target: null
+        };
+
+        // Canvas settings
+        const MARGIN = 30;
+        let scale = 1;
+        let displayWidth = 0;
+
+        // WebSocket for stop command
+        let motorSocket = null;
+
+        function connectWebSocket() {
+            const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+            motorSocket = new WebSocket(`${protocol}//${window.location.host}/motor`);
+
+            motorSocket.onopen = () => {
+                connStatus.textContent = 'Connected';
+                statusDot.classList.add('connected');
+            };
+
+            motorSocket.onclose = () => {
+                connStatus.textContent = 'Disconnected';
+                statusDot.classList.remove('connected');
+                setTimeout(connectWebSocket, 2000);
+            };
+
+            motorSocket.onerror = () => {
+                motorSocket.close();
+            };
+        }
+
+        function sendStop() {
+            if (motorSocket && motorSocket.readyState === WebSocket.OPEN) {
+                // Send stop which also clears queue on server
+                motorSocket.send(JSON.stringify({ type: 'voice', command: 'stop' }));
+            }
+        }
+
+
+        function resizeCanvas() {
+            const container = canvas.parentElement;
+            const size = container.clientWidth - 20;
+            canvas.width = size;
+            canvas.height = size;
+            displayWidth = courseConfig.dimensions.width + 2 * BORDER;
+            scale = (size - 2 * MARGIN) / displayWidth;
+        }
+
+        function toCanvasX(x) {
+            return MARGIN + (x + BORDER) * scale;
+        }
+
+        function toCanvasY(y) {
+            return canvas.height - MARGIN - (y + BORDER) * scale;
+        }
+
+        function drawCourse() {
+            const playArea = courseConfig.playArea || PLAY_AREA;
+
+            // Clear canvas
+            ctx.fillStyle = '#0a0a0a';
+            ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+            // Draw grid (5ft increments)
+            ctx.strokeStyle = 'rgba(255, 255, 255, 0.15)';
+            ctx.lineWidth = 1;
+            for (let i = 0; i <= playArea; i += 5) {
+                ctx.beginPath();
+                ctx.moveTo(toCanvasX(i), toCanvasY(0));
+                ctx.lineTo(toCanvasX(i), toCanvasY(playArea));
+                ctx.stroke();
+
+                ctx.beginPath();
+                ctx.moveTo(toCanvasX(0), toCanvasY(i));
+                ctx.lineTo(toCanvasX(playArea), toCanvasY(i));
+                ctx.stroke();
+            }
+
+            // Draw border zone
+            ctx.fillStyle = 'rgba(139, 90, 80, 0.5)';
+            ctx.fillRect(toCanvasX(-BORDER), toCanvasY(playArea + BORDER), displayWidth * scale, BORDER * scale);
+            ctx.fillRect(toCanvasX(-BORDER), toCanvasY(0), displayWidth * scale, BORDER * scale);
+            ctx.fillRect(toCanvasX(-BORDER), toCanvasY(playArea), BORDER * scale, playArea * scale);
+            ctx.fillRect(toCanvasX(playArea), toCanvasY(playArea), BORDER * scale, playArea * scale);
+
+            // Draw play area boundary
+            ctx.strokeStyle = 'rgba(150, 180, 220, 0.8)';
+            ctx.lineWidth = 2;
+            ctx.setLineDash([8, 4]);
+            ctx.strokeRect(toCanvasX(0), toCanvasY(playArea), playArea * scale, playArea * scale);
+            ctx.setLineDash([]);
+
+            // Draw buckets
+            const bucketColors = {
+                red: '#ef4444',
+                yellow: '#eab308',
+                blue: '#3b82f6',
+                green: '#22c55e'
+            };
+
+            for (const [color, pos] of Object.entries(courseConfig.buckets)) {
+                const x = toCanvasX(pos[0]);
+                const y = toCanvasY(pos[1]);
+
+                ctx.fillStyle = bucketColors[color];
+                ctx.beginPath();
+                ctx.arc(x, y, 12, 0, 2 * Math.PI);
+                ctx.fill();
+
+                ctx.fillStyle = 'white';
+                ctx.font = 'bold 11px Arial';
+                ctx.textAlign = 'center';
+                const labelOffset = pos[1] > 15 ? -20 : 28;
+                ctx.fillText(color.toUpperCase(), x, y + labelOffset);
+            }
+
+            // Draw center
+            const cx = toCanvasX(courseConfig.center[0]);
+            const cy = toCanvasY(courseConfig.center[1]);
+            ctx.strokeStyle = 'rgba(255, 255, 255, 0.5)';
+            ctx.fillStyle = 'rgba(255, 255, 255, 0.2)';
+            ctx.beginPath();
+            ctx.arc(cx, cy, 8, 0, 2 * Math.PI);
+            ctx.fill();
+            ctx.stroke();
+
+            // Draw robot
+            drawRobot();
+        }
+
+        function drawRobot() {
+            const x = toCanvasX(robotState.x);
+            const y = toCanvasY(robotState.y);
+            const heading = robotState.heading;
+
+            ctx.save();
+            ctx.translate(x, y);
+            ctx.rotate(-heading * Math.PI / 180);
+
+            // Robot body
+            ctx.fillStyle = '#60a5fa';
+            ctx.fillRect(-10, -7, 20, 14);
+
+            // Direction indicator
+            ctx.fillStyle = '#fbbf24';
+            ctx.beginPath();
+            ctx.moveTo(10, 0);
+            ctx.lineTo(17, -5);
+            ctx.lineTo(17, 5);
+            ctx.closePath();
+            ctx.fill();
+
+            ctx.restore();
+
+            // Draw target line if navigating
+            if (robotState.target) {
+                ctx.strokeStyle = 'rgba(251, 191, 36, 0.5)';
+                ctx.lineWidth = 2;
+                ctx.setLineDash([5, 5]);
+                ctx.beginPath();
+                ctx.moveTo(x, y);
+                ctx.lineTo(toCanvasX(robotState.target[0]), toCanvasY(robotState.target[1]));
+                ctx.stroke();
+                ctx.setLineDash([]);
+            }
+        }
+
+        function updateStatus() {
+            fetch('/api/navigation/status')
+                .then(response => response.json())
+                .then(data => {
+                    if (!data.error) {
+                        robotState.x = data.x;
+                        robotState.y = data.y;
+                        robotState.heading = data.heading;
+                        robotState.mode = data.mode || 'idle';
+                        robotState.target = data.target;
+
+                        document.getElementById('position').textContent = `(${data.x.toFixed(1)}, ${data.y.toFixed(1)})`;
+                        document.getElementById('heading').textContent = `${data.heading.toFixed(0)}°`;
+                        document.getElementById('mode').textContent = robotState.mode;
+
+                        drawCourse();
+                    }
+                })
+                .catch(() => {});
+        }
+
+        function loadCourseConfig() {
+            fetch('/api/course/info')
+                .then(response => response.json())
+                .then(data => {
+                    courseConfig.dimensions = data.dimensions || courseConfig.dimensions;
+                    courseConfig.buckets = data.buckets || courseConfig.buckets;
+                    courseConfig.center = data.center || courseConfig.center;
+                    courseConfig.start_position = data.start_position || courseConfig.start_position;
+                    courseConfig.playArea = PLAY_AREA;
+                    courseConfig.border = BORDER;
+                    resizeCanvas();
+                    drawCourse();
+                })
+                .catch(() => {
+                    resizeCanvas();
+                    drawCourse();
+                });
+        }
+
+        // Event listeners
+        stopBtn.addEventListener('click', sendStop);
+        stopBtn.addEventListener('touchstart', (e) => {
+            e.preventDefault();
+            sendStop();
+        });
+
+        window.addEventListener('resize', () => {
+            resizeCanvas();
+            drawCourse();
+        });
+
+        // Initialize
+        connectWebSocket();
+        loadCourseConfig();
+        updateStatus();
+        setInterval(updateStatus, 500);
+    </script>
+</body>
+</html>
