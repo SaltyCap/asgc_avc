@@ -266,7 +266,7 @@ _process_queue() → pop command from front
 ## File Locations
 
 ```
-antigravity/
+home/
 ├── start_all.sh
 ├── c_code/
 │   └── src/mc2_coordinated.c
