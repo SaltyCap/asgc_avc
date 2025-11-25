@@ -40,19 +40,51 @@ else
     exit 1
 fi
 
-# 3. Start Web Server
-echo "Starting Web Server..."
+# 3. Setup Python Virtual Environment
+echo "Setting up Python environment..."
 cd "$SCRIPT_DIR/web_server"
 
-# Check if venv exists
-if [ -d "venv" ]; then
+# Check if venv exists, create if not
+if [ ! -d "venv" ]; then
+    echo "Creating virtual environment..."
+    if python3 -m venv venv; then
+        echo "Virtual environment created successfully."
+    else
+        echo "Error: Failed to create virtual environment."
+        exit 1
+    fi
+
+    # Install dependencies
+    echo "Installing Python dependencies..."
     source venv/bin/activate
+    if pip install -r requirements.txt; then
+        echo "Dependencies installed successfully."
+    else
+        echo "Error: Failed to install dependencies."
+        exit 1
+    fi
 else
-    echo "Error: Virtual environment 'venv' not found in web_server directory."
-    echo "Please create it with: python3 -m venv venv && source venv/bin/activate && pip install -r requirements.txt"
-    exit 1
+    echo "Virtual environment found."
+    source venv/bin/activate
 fi
 
-# Run the server
+# 4. Check for SSL Certificates
+echo "Checking for SSL certificates..."
+if [ ! -f "cert.pem" ] || [ ! -f "key.pem" ]; then
+    echo "SSL certificates not found. Generating self-signed certificates..."
+    if openssl req -x509 -newkey rsa:4096 -nodes -out cert.pem -keyout key.pem -days 365 -subj "/C=US/ST=Arkansas/L=Conway/O=ASGC/CN=localhost" 2>/dev/null; then
+        echo "SSL certificates generated successfully."
+        echo "Note: Your browser will show a security warning. This is expected for self-signed certificates."
+    else
+        echo "Warning: Failed to generate SSL certificates. Microphone access may not work."
+        echo "You can manually generate them with:"
+        echo "  openssl req -x509 -newkey rsa:4096 -nodes -out cert.pem -keyout key.pem -days 365"
+    fi
+else
+    echo "SSL certificates found."
+fi
+
+# 5. Start Web Server
+echo "Starting Web Server..."
 # Note: The server needs to be run with python3, and it will internally use sudo for the motor process
 python3 web_server.py
