@@ -41,8 +41,8 @@ The C motor control program and Python web server are integrated via stdin/stdou
 ### Startup Script (`start_all.sh`)
 ```bash
 #!/bin/bash
-cd ~/antigravity/c_code && make clean && make
-cd ~/antigravity/web_server
+cd ~/asgc_avc/c_code && make clean && make
+cd ~/asgc_avc/web_server
 source venv/bin/activate
 sudo ./venv/bin/python web_server.py
 ```
@@ -120,13 +120,13 @@ The voice control page displays a 5-slot queue:
 
 1. **Motor control compiled:**
    ```bash
-   cd ~/antigravity/c_code
+   cd ~/asgc_avc/c_code
    make
    ```
 
 2. **Python venv with dependencies:**
    ```bash
-   cd ~/antigravity/web_server
+   cd ~/asgc_avc/web_server
    python3 -m venv venv
    source venv/bin/activate
    pip install flask flask-sock vosk numpy
@@ -134,7 +134,7 @@ The voice control page displays a 5-slot queue:
 
 3. **SSL certificates:**
    ```bash
-   cd ~/antigravity/web_server
+   cd ~/asgc_avc/web_server
    openssl req -x509 -newkey rsa:4096 -keyout key.pem -out cert.pem -days 365 -nodes
    ```
 
@@ -143,7 +143,7 @@ The voice control page displays a 5-slot queue:
 ### Starting the Server
 
 ```bash
-cd ~/antigravity
+cd ~/asgc_avc
 ./start_all.sh
 ```
 
@@ -201,10 +201,16 @@ Browser Touch → /motor WebSocket → motor_interface.send_command()
 ## File Structure
 
 ```
-antigravity/
+asgc_avc/
 ├── start_all.sh
 ├── c_code/
-│   ├── src/mc2_coordinated.c
+│   ├── src/
+│   │   ├── main.c
+│   │   ├── motor.c
+│   │   ├── pid.c
+│   │   ├── i2c.c
+│   │   └── common.c
+│   ├── include/
 │   ├── mc2_coordinated (binary)
 │   └── Makefile
 └── web_server/
@@ -212,6 +218,9 @@ antigravity/
     ├── navigation_coordinated.py
     ├── course_config.py
     ├── app/
+    │   ├── __init__.py
+    │   ├── config.py
+    │   ├── motor_interface.py
     │   ├── routes.py
     │   └── sockets.py
     └── templates/

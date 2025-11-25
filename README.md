@@ -68,7 +68,7 @@ This repository contains a complete autonomous vehicle control system with voice
 ### 2. Start the System
 
 ```bash
-cd ~/antigravity
+cd ~/asgc_avc
 ./start_all.sh
 ```
 
@@ -86,38 +86,47 @@ This script:
 ## Project Structure
 
 ```
-antigravity/
+asgc_avc/
+├── README.md                 # This file
 ├── start_all.sh              # Main startup script
 │
-├── c_code/
+├── c_code/                   # C motor control program
 │   ├── src/
-│   │   ├── mc2_coordinated.c # Motor control with PID
-│   │   └── ...
+│   │   ├── main.c            # Main entry point
+│   │   ├── motor.c           # Motor control functions
+│   │   ├── pid.c             # PID controller
+│   │   ├── i2c.c             # I2C encoder communication
+│   │   └── common.c          # Shared utilities
+│   ├── include/              # Header files
+│   │   ├── motor.h
+│   │   ├── pid.h
+│   │   ├── i2c.h
+│   │   └── common.h
 │   ├── mc2_coordinated       # Compiled binary
 │   └── Makefile
 │
-├── web_server/
+├── web_server/               # Python Flask web server
 │   ├── web_server.py         # Main Flask server
 │   ├── navigation_coordinated.py  # Navigation + queue
 │   ├── course_config.py      # Course parameters
-│   ├── model/                # Vosk model (vosk-model-en-us-0.22)
-│   ├── cert.pem              # SSL certificate
-│   ├── key.pem               # SSL key
+│   ├── requirements.txt      # Python dependencies
 │   ├── app/
-│   │   ├── __init__.py
+│   │   ├── __init__.py       # App initialization
+│   │   ├── config.py         # Configuration
+│   │   ├── motor_interface.py # C program interface
 │   │   ├── routes.py         # HTTP routes
 │   │   └── sockets.py        # WebSocket handlers + voice
 │   ├── static/
-│   │   ├── css/style.css
-│   │   └── js/main.js
+│   │   ├── css/              # Stylesheets
+│   │   └── js/               # JavaScript
 │   └── templates/
 │       ├── index.html        # Voice control + queue UI
 │       ├── joystick.html     # Manual control
 │       └── course_view.html  # Course map visualization
 │
-└── docs/
-    ├── README.md             # This file
-    └── ...
+└── guides/                   # Documentation
+    ├── AUTONOMOUS_NAVIGATION_GUIDE.md
+    └── INTEGRATION_GUIDE.md
 ```
 
 ## Voice Commands
@@ -296,7 +305,7 @@ START_HEADING = 90               # Facing east
 
 ### 3. Test Navigation
 ```bash
-cd ~/antigravity/web_server
+cd ~/asgc_avc/web_server
 python3 test_navigation.py
 ```
 
@@ -332,6 +341,13 @@ python3 test_navigation.py
 - **Voice Recognition**: Vosk (vosk-model-en-us-0.22, 1.8GB)
 - **Frontend**: Vanilla JS, CSS3
 - **Communication**: WebSocket, REST API
+
+## Additional Documentation
+
+For more detailed information, see the `guides/` directory:
+
+- **[Autonomous Navigation Guide](guides/AUTONOMOUS_NAVIGATION_GUIDE.md)** - Detailed navigation system documentation, command queue usage, and mission planning
+- **[Integration Guide](guides/INTEGRATION_GUIDE.md)** - How the C motor control and Python web server integrate, architecture details, and communication protocols
 
 ## License
 

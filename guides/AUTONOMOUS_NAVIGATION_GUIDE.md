@@ -101,7 +101,7 @@ Your robot must navigate a 30×30 foot course with colored buckets at each corne
 
 ### 1. Start the Server
 ```bash
-cd ~/antigravity
+cd ~/asgc_avc
 ./start_all.sh
 ```
 
@@ -211,7 +211,7 @@ GET  /api/course/info            # Course configuration
 
 ### 3. Test Navigation
 ```bash
-cd ~/antigravity/web_server
+cd ~/asgc_avc/web_server
 python3 test_navigation.py
 ```
 
