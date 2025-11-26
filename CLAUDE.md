@@ -185,9 +185,10 @@ Browser will show security warning (self-signed cert) - accept to continue.
   - PWM pins: GPIO 12 (left motor), GPIO 13 (right motor)
 - **I2C**: Enabled in `/boot/config.txt` with `dtparam=i2c_arm=on,i2c_arm_baudrate=400000`
   - AS5600 encoder on default I2C bus (usually `/dev/i2c-1`)
-- **Vosk model**: Download and extract to `web_server/model/` (1.8GB)
-  - Model: `vosk-model-en-us-0.22`
-  - URL: https://alphacephei.com/vosk/models
+- **Vosk model**: Automatically downloaded by `start_all.sh` if not present (~600MB)
+  - Model: `vosk-model-small-en-us-0.15` (optimized for ARM/Raspberry Pi)
+  - Manual download: https://alphacephei.com/vosk/models/vosk-model-small-en-us-0.15.zip
+  - Extract to `web_server/model/` directory
 
 ## Python Virtual Environment
 
@@ -208,7 +209,7 @@ Dependencies are listed in `requirements.txt` (Flask, Flask-Sock, Vosk).
 
 **"Motor control program not found"**: Run `make` in `c_code/` directory
 
-**Segfault on startup**: Usually Vosk model incompatibility. Verify model path in `web_server/app/config.py` and ensure model is for Linux ARM64.
+**Segfault on startup or "not a Raspberry Pi" warnings**: Usually Vosk model incompatibility. The `start_all.sh` script automatically downloads the ARM-optimized model (`vosk-model-small-en-us-0.15`). If you manually downloaded a different model, delete it and let the script download the correct one.
 
 **Motors don't respond**:
 - Check `sudo` permissions (C program needs root for GPIO)

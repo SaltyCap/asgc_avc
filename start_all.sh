@@ -84,7 +84,44 @@ else
     echo "SSL certificates found."
 fi
 
-# 5. Start Web Server
+# 5. Check for Vosk Model
+echo "Checking for Vosk speech recognition model..."
+MODEL_DIR="model"
+MODEL_NAME="vosk-model-small-en-us-0.15"
+MODEL_URL="https://alphacephei.com/vosk/models/${MODEL_NAME}.zip"
+
+if [ ! -d "$MODEL_DIR" ]; then
+    echo "Vosk model not found. Downloading ${MODEL_NAME} (600MB)..."
+    echo "This may take several minutes depending on your connection..."
+
+    # Download the model
+    if wget -q --show-progress "$MODEL_URL" -O "${MODEL_NAME}.zip"; then
+        echo "Download complete. Extracting..."
+        if unzip -q "${MODEL_NAME}.zip"; then
+            # Rename to 'model' for consistency
+            mv "$MODEL_NAME" "$MODEL_DIR"
+            rm "${MODEL_NAME}.zip"
+            echo "Vosk model installed successfully."
+        else
+            echo "Error: Failed to extract model archive."
+            rm -f "${MODEL_NAME}.zip"
+            echo "You can manually download and extract the model:"
+            echo "  wget $MODEL_URL"
+            echo "  unzip ${MODEL_NAME}.zip"
+            echo "  mv $MODEL_NAME $MODEL_DIR"
+            exit 1
+        fi
+    else
+        echo "Error: Failed to download Vosk model."
+        echo "Please check your internet connection and try again."
+        echo "You can manually download from: $MODEL_URL"
+        exit 1
+    fi
+else
+    echo "Vosk model found."
+fi
+
+# 6. Start Web Server
 echo "Starting Web Server..."
 # Note: The server needs to be run with python3, and it will internally use sudo for the motor process
 python3 web_server.py
