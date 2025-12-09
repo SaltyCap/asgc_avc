@@ -108,21 +108,36 @@ void* encoder_feedback_thread(void* arg) {
     int sleep_us = 50; // 20kHz
 
     while (running) {
-        // Read from each motor's encoder separately
-        for (int i = 0; i < 2; i++) {
-            int16_t raw_angle = read_raw_angle(i);  // Pass motor_id to read correct sensor
-            if (raw_angle >= 0) {
-                pthread_mutex_lock(&motors[i].lock);
-                pids[i].current_raw_angle = raw_angle;
-                update_total_counts(&pids[i], raw_angle);
+        // Read both encoders as close together as possible for synchronized data
+        int16_t left_angle = read_raw_angle(0);   // Left encoder (0x40)
+        int16_t right_angle = read_raw_angle(1);  // Right encoder (0x1B)
 
-                int32_t current_counts = pids[i].total_counts +
-                                        (raw_angle - pids[i].start_raw_angle);
+        // Process left motor encoder
+        if (left_angle >= 0) {
+            pthread_mutex_lock(&motors[0].lock);
+            pids[0].current_raw_angle = left_angle;
+            update_total_counts(&pids[0], left_angle);
 
-                printf("ENCODER %d %d %d\n", i, current_counts, raw_angle);
-                pthread_mutex_unlock(&motors[i].lock);
-            }
+            int32_t current_counts = pids[0].total_counts +
+                                    (left_angle - pids[0].start_raw_angle);
+
+            printf("ENCODER 0 %d %d\n", current_counts, left_angle);
+            pthread_mutex_unlock(&motors[0].lock);
         }
+
+        // Process right motor encoder
+        if (right_angle >= 0) {
+            pthread_mutex_lock(&motors[1].lock);
+            pids[1].current_raw_angle = right_angle;
+            update_total_counts(&pids[1], right_angle);
+
+            int32_t current_counts = pids[1].total_counts +
+                                    (right_angle - pids[1].start_raw_angle);
+
+            printf("ENCODER 1 %d %d\n", current_counts, right_angle);
+            pthread_mutex_unlock(&motors[1].lock);
+        }
+
         fflush(stdout);
         usleep(sleep_us);
     }
