@@ -18,6 +18,12 @@ web_server/model/
 # SSL certificates (sensitive)
 *.pem
 
+# Hotspot configuration (contains WiFi password)
+HOTSPOT_SETUP.md
+enable_hotspot.sh
+disable_hotspot.sh
+QUICK_REFERENCE.txt
+
 # IDE
 .vscode/
 .idea/
