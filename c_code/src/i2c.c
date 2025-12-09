@@ -12,14 +12,19 @@ int i2c_fd = -1;
 int i2c_init(void) {
     i2c_fd = open(I2C_BUS, O_RDWR);
     if (i2c_fd < 0) return -1;
-    if (ioctl(i2c_fd, I2C_SLAVE, AS5600_ADDRESS) < 0) {
-        close(i2c_fd);
-        return -1;
-    }
     return 0;
 }
 
-int16_t read_raw_angle(void) {
+int16_t read_raw_angle(int motor_id) {
+    // Select the correct sensor address based on motor ID
+    // motor_id 0 = left (0x40), motor_id 1 = right (0x1B)
+    int address = (motor_id == 0) ? AS5600_LEFT_ADDRESS : AS5600_RIGHT_ADDRESS;
+
+    // Set the I2C slave address for this read
+    if (ioctl(i2c_fd, I2C_SLAVE, address) < 0) {
+        return -1;
+    }
+
     uint8_t buf[2];
     buf[0] = 0x0C; // REG_RAW_ANGLE_H
     if (write(i2c_fd, buf, 1) != 1) return -1;

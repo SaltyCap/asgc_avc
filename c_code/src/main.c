@@ -108,9 +108,10 @@ void* encoder_feedback_thread(void* arg) {
     int sleep_us = 50; // 20kHz
 
     while (running) {
-        int16_t raw_angle = read_raw_angle();
-        if (raw_angle >= 0) {
-            for (int i = 0; i < 2; i++) {
+        // Read from each motor's encoder separately
+        for (int i = 0; i < 2; i++) {
+            int16_t raw_angle = read_raw_angle(i);  // Pass motor_id to read correct sensor
+            if (raw_angle >= 0) {
                 pthread_mutex_lock(&motors[i].lock);
                 pids[i].current_raw_angle = raw_angle;
                 update_total_counts(&pids[i], raw_angle);
@@ -121,8 +122,8 @@ void* encoder_feedback_thread(void* arg) {
                 printf("ENCODER %d %d %d\n", i, current_counts, raw_angle);
                 pthread_mutex_unlock(&motors[i].lock);
             }
-            fflush(stdout);
         }
+        fflush(stdout);
         usleep(sleep_us);
     }
     return NULL;
