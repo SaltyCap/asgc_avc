@@ -303,10 +303,12 @@ int main(void) {
 
     pthread_mutex_init(&coord_move.lock, NULL);
 
+    fprintf(stderr, "Arming ESCs...\n");
+    fflush(stderr);
+    sleep(2);
+
     printf("READY coordinated\n");
     fflush(stdout);
-
-    sleep(2);
 
     pthread_t feedback_thread, control_thread, input_thread;
 

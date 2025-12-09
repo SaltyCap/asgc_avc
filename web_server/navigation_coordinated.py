@@ -86,6 +86,17 @@ class CoordinatedNavigationController:
         self.wheelbase_feet = WHEELBASE_INCHES / INCHES_PER_FOOT
         self.wheel_circumference_feet = WHEEL_CIRCUMFERENCE_INCHES / INCHES_PER_FOOT
 
+        # Speed multiplier (0.0 to 1.0, controlled by throttle slider)
+        self.speed_multiplier = 1.0
+
+    def set_speed_multiplier(self, multiplier: float):
+        """
+        Set the speed multiplier (0.0 to 1.0).
+        This is controlled by the throttle slider on the web interface.
+        """
+        self.speed_multiplier = max(0.0, min(1.0, multiplier))
+        print(f"[NAV] Speed multiplier set to {self.speed_multiplier:.2f} ({int(self.speed_multiplier * 100)}%)")
+
     def update_encoder_data(self, motor_id: int, total_counts: int, current_angle: int):
         """
         Update encoder data from motor controller.
@@ -236,10 +247,15 @@ class CoordinatedNavigationController:
         # Convert to encoder counts
         turn_counts = feet_to_counts(arc_length)
 
-        # Send coordinated turn command
+        # Send coordinated turn command using arc with speed multiplier
         # Positive turn_angle = turn right (left +, right -)
         # Negative turn_angle = turn left (left -, right +)
-        self.send_command(f"turn {turn_counts if turn_angle > 0 else -turn_counts}")
+        # Use arc command to apply speed multiplier: arc <left> <right> <speed>
+        turn_speed = 0.8 * self.speed_multiplier  # 0.8 is base turn speed factor
+        if turn_angle > 0:
+            self.send_command(f"arc {turn_counts} {-turn_counts} {turn_speed}")
+        else:
+            self.send_command(f"arc {-turn_counts} {turn_counts} {turn_speed}")
 
         # Estimate completion time
         self.movement_start_time = time.time()
@@ -278,8 +294,11 @@ class CoordinatedNavigationController:
         # Convert distance to encoder counts
         drive_counts = feet_to_counts(distance_feet)
 
-        # Send coordinated drive command (both wheels same direction)
-        self.send_command(f"drive {drive_counts}")
+        # Send coordinated drive command using arc with speed multiplier
+        # Use arc command to apply speed multiplier: arc <left> <right> <speed>
+        # For straight driving, both wheels get the same counts
+        drive_speed = 1.0 * self.speed_multiplier  # 1.0 is base drive speed factor
+        self.send_command(f"arc {drive_counts} {drive_counts} {drive_speed}")
 
         # Estimate completion time
         self.movement_start_time = time.time()

@@ -358,7 +358,7 @@
             <input type="range" min="0" max="100" value="100" step="5" class="pwm-slider" id="pwmLimitSlider">
             <div class="pulse-width-info">
                 <span>Min: <strong id="pwMinValue">1000</strong> µs</span>
-                <span>Center: <strong>1400</strong> µs</span>
+                <span>Center: <strong>1500</strong> µs</span>
                 <span>Max: <strong id="pwMaxValue">2000</strong> µs</span>
             </div>
         </div>
@@ -395,13 +395,13 @@
         let pwmLimit = 100; // 0-100, scales the output
 
         // PWM pulse width constants (in µs)
-        const PW_NEUTRAL = 1400;
+        const PW_NEUTRAL = 1500;
         const PW_FORWARD_MAX = 2000;
         const PW_REVERSE_MAX = 1000;
 
         function updatePulseWidthDisplay() {
             // Calculate the limited pulse width range based on slider
-            // At 0%: min = max = neutral (1400)
+            // At 0%: min = max = neutral (1500)
             // At 100%: min = 1000, max = 2000
             const minPw = Math.round(PW_NEUTRAL - (PW_NEUTRAL - PW_REVERSE_MAX) * pwmLimit / 100);
             const maxPw = Math.round(PW_NEUTRAL + (PW_FORWARD_MAX - PW_NEUTRAL) * pwmLimit / 100);
@@ -554,7 +554,7 @@
         }
 
         // PWM pulse width constants (in nanoseconds) - must match motor.h
-        const PW_NEUTRAL_NS = 1400000;
+        const PW_NEUTRAL_NS = 1500000;
         const PW_FORWARD_MAX_NS = 2000000;
         const PW_REVERSE_MAX_NS = 1000000;
 

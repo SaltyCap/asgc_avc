@@ -26,16 +26,47 @@ cd c_code && make clean
 # Start entire system (recommended)
 ./start_all.sh
 # This script:
-# 1. Sets I2C speed to 400kHz
-# 2. Builds C code
-# 3. Activates Python venv
-# 4. Starts web server (which launches motor controller)
+# 1. Checks/starts pigpiod daemon
+# 2. Sets I2C speed to 400kHz
+# 3. Builds C code
+# 4. Creates/activates Python venv
+# 5. Generates SSL certificates (if missing)
+# 6. Downloads Vosk model (if missing, ~600MB)
+# 7. Starts web server (which launches motor controller)
 
 # Start web server only (if C code already built)
 cd web_server
 source venv/bin/activate
 python web_server.py
 ```
+
+### Network Modes
+
+The Pi can operate in two network modes:
+
+**WiFi Mode** (for development with SSH access):
+- Connects to existing WiFi network
+- Access web server at Pi's WiFi IP address (check with `hostname -I`)
+- Example: `https://192.168.0.82:5000`
+
+**Hotspot Mode** (for field operation without WiFi):
+```bash
+# Enable hotspot (WARNING: will disconnect SSH if connected via WiFi)
+./enable_hotspot.sh
+
+# This creates WiFi network:
+#   SSID: ASGC_Robot
+#   Password: robotcontrol
+#   Pi IP: 10.42.0.1
+
+# Connect your phone/laptop to ASGC_Robot network
+# Access: https://10.42.0.1:5000
+
+# To switch back to WiFi:
+./disable_hotspot.sh
+```
+
+See `HOTSPOT_SETUP.md` for detailed troubleshooting and configuration options.
 
 ### Testing
 
@@ -175,7 +206,7 @@ cd web_server
 openssl req -x509 -newkey rsa:4096 -nodes -out cert.pem -keyout key.pem -days 365
 ```
 
-Browser will show security warning (self-signed cert) - accept to continue.
+Browser will show security warning (self-signed cert) - accept to continue. The `start_all.sh` script automatically generates these if they don't exist.
 
 ## Hardware Dependencies
 
@@ -209,7 +240,9 @@ Dependencies are listed in `requirements.txt` (Flask, Flask-Sock, Vosk).
 
 **"Motor control program not found"**: Run `make` in `c_code/` directory
 
-**Segfault on startup or "not a Raspberry Pi" warnings**: Usually Vosk model incompatibility. The `start_all.sh` script automatically downloads the ARM-optimized model (`vosk-model-small-en-us-0.15`). If you manually downloaded a different model, delete it and let the script download the correct one.
+**Segfault on startup or "not a Raspberry Pi" warnings**: Usually Vosk model incompatibility. The `start_all.sh` script automatically downloads the ARM-optimized model (`vosk-model-small-en-us-0.15`, ~600MB). If you manually downloaded a different model, delete it and let the script download the correct one.
+
+**"pigpio daemon not running"**: The C program requires pigpiod for PWM control. Run `sudo pigpiod` or let `start_all.sh` start it automatically.
 
 **Motors don't respond**:
 - Check `sudo` permissions (C program needs root for GPIO)

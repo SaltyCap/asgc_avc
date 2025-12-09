@@ -122,14 +122,23 @@ def motor_socket(ws):
                             ws.send(json.dumps({'type': 'mode_set', 'mode': control_mode}))
                         continue
 
+                    # Handle speed setting (works in both modes)
+                    if msg_type == 'set_speed':
+                        speed_percent = data.get('speed_percent', 100)
+                        speed_percent = max(0, min(100, int(speed_percent)))
+                        nav_controller.set_speed_multiplier(speed_percent / 100.0)
+                        print(f"Speed multiplier set to: {speed_percent}%")
+                        ws.send(json.dumps({'type': 'speed_set', 'speed_percent': speed_percent}))
+                        continue
+
                     # Handle commands based on control mode
                     match control_mode:
                         case 'joystick':
                             # Joystick mode: only allow direct PWM control
                             if msg_type == 'joystick':
                                 # Use exact pulse width values from client (in nanoseconds)
-                                left_ns = data.get('leftNs', 1400000)
-                                right_ns = data.get('rightNs', 1400000)
+                                left_ns = data.get('leftNs', 1500000)
+                                right_ns = data.get('rightNs', 1500000)
 
                                 # Clamp to valid pulse width range for safety
                                 left_ns = max(1000000, min(2000000, int(left_ns)))

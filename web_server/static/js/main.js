@@ -30,6 +30,11 @@ const queueSlots = [
 ];
 let motorWs;
 
+// Throttle Control Variables
+const throttleSlider = document.getElementById('throttleSlider');
+const throttleValue = document.getElementById('throttleValue');
+let currentThrottle = 100;
+
 // Connection Status Variables
 const statusDot = document.getElementById('statusDot');
 const statusText = document.getElementById('statusText');
@@ -216,6 +221,8 @@ function connectMotorWebSocket() {
         console.log('Motor WebSocket connected');
         if (statusDot) statusDot.classList.add('connected');
         if (statusText) statusText.textContent = 'Connected';
+        // Send current throttle setting
+        sendThrottleSetting();
     };
 
     motorWs.onclose = () => {
@@ -252,6 +259,22 @@ function clearQueue() {
 
 function resetPosition() {
     sendQueueCommand('reset position');
+}
+
+function updateThrottleDisplay() {
+    currentThrottle = parseInt(throttleSlider.value);
+    throttleValue.textContent = `${currentThrottle}%`;
+    sendThrottleSetting();
+}
+
+function sendThrottleSetting() {
+    if (motorWs && motorWs.readyState === WebSocket.OPEN) {
+        motorWs.send(JSON.stringify({
+            type: 'set_speed',
+            speed_percent: currentThrottle
+        }));
+        console.log(`Throttle set to ${currentThrottle}%`);
+    }
 }
 
 function fetchQueueStatus() {
@@ -347,6 +370,10 @@ document.addEventListener('DOMContentLoaded', () => {
     // Queue control initialization
     clearQueueBtn.addEventListener('click', clearQueue);
     resetPosBtn.addEventListener('click', resetPosition);
+
+    // Throttle slider initialization
+    throttleSlider.addEventListener('input', updateThrottleDisplay);
+
     connectMotorWebSocket();
     fetchQueueStatus();
     setInterval(fetchQueueStatus, 500);

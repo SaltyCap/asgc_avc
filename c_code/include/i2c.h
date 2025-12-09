@@ -4,7 +4,7 @@
 #include <stdint.h>
 
 #define I2C_BUS "/dev/i2c-1"
-#define AS5600_ADDRESS 0x36
+#define AS5600_ADDRESS 0x40
 
 int i2c_init(void);
 void i2c_cleanup(void);

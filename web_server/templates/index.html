@@ -50,6 +50,20 @@
                 <p id="transcript"><em>Transcribed text will appear here...</em></p>
             </div>
 
+            <!-- Throttle Control -->
+            <div class="throttle-control">
+                <div class="throttle-header">
+                    <span class="throttle-label">Throttle</span>
+                    <span class="throttle-value" id="throttleValue">100%</span>
+                </div>
+                <input type="range" min="0" max="100" value="100" step="5" class="throttle-slider" id="throttleSlider">
+                <div class="throttle-info">
+                    <span>0%</span>
+                    <span>50%</span>
+                    <span>100%</span>
+                </div>
+            </div>
+
             <!-- Command Queue -->
             <div class="queue-header">
                 <span class="queue-status" id="queueStatus">Idle</span>
