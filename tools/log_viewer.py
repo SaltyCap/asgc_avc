@@ -31,8 +31,9 @@ class LogViewer:
         root = tk.Tk()
         root.withdraw()
         
-        # Default to logs directory
-        initial_dir = os.path.dirname(os.path.abspath(__file__))
+        # Default to logs directory (../logs from tools/log_viewer.py)
+        tools_dir = os.path.dirname(os.path.abspath(__file__))
+        initial_dir = os.path.abspath(os.path.join(tools_dir, "../logs"))
         
         filename = filedialog.askopenfilename(
             title="Select Motor Control Log File",
@@ -149,7 +150,8 @@ class LogViewer:
         ax.set_title('Robot Position (Odometry)')
         ax.legend(loc='upper right')
         ax.grid(True, alpha=0.3)
-        ax.autoscale(enable=True, axis='both', tight=True)
+        ax.margins(x=0.05, y=0.1) # Add padding
+        ax.autoscale(enable=True, axis='both', tight=False)
         
         # Plot 8: 2D Path Visualization
         ax = self.axes[3, 1]
@@ -172,8 +174,11 @@ class LogViewer:
         ax.set_title('Robot Path (Top-Down View)')
         ax.legend(loc='upper right', fontsize=8)
         ax.grid(True, alpha=0.3)
-        ax.axis('equal')
-        ax.autoscale(enable=True, axis='both', tight=True)
+        ax.axis('equal') # Keep proportional aspect ratio
+        ax.margins(0.1)  # Add padding around path
+        # Note: autoscale with tight=True conflicts with axis('equal') sometimes, 
+        # so we rely on axis('equal') + margins
+
         
         # Adjust layout
         plt.tight_layout(rect=[0, 0.03, 1, 0.97])
