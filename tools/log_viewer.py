@@ -19,11 +19,12 @@ import sys
 import os
 
 class LogViewer:
-    def __init__(self):
+    def __init__(self, initial_file=None):
         self.fig = None
         self.axes = None
         self.data = None
         self.filename = None
+        self.initial_file = initial_file
         
     def select_file(self):
         """Open file dialog to select a log file"""
@@ -221,26 +222,36 @@ class LogViewer:
         self.buttons = [btn_reload, btn_new]
     
     def reload(self):
-        """Reload the current file"""
+        """Reload the current file by restarting the application"""
+        plt.close('all')
         if self.filename:
-            plt.close(self.fig)
-            # Reconstruct full path
+            # Restart with the current filename as argument
+            # We use sys.executable to run the same python interpreter
+            # sys.argv[0] is the script name
+            # os.path.join needed to handle full path correctly
             log_dir = os.path.dirname(os.path.abspath(__file__))
             full_path = os.path.join(log_dir, self.filename)
-            if os.path.exists(full_path):
-                self.load_data(full_path)
-                self.create_plots()
-                plt.show()
+            
+            print(f"Reloading {full_path}...")
+            os.execv(sys.executable, [sys.executable, sys.argv[0], full_path])
+        else:
+            # Fallback to just restart
+             os.execv(sys.executable, [sys.executable, sys.argv[0]])
     
     def load_new_file(self):
-        """Load a new log file"""
-        plt.close(self.fig)
-        self.run()
+        """Load a new log file by restarting the application without arguments"""
+        plt.close('all')
+        print("Restarting to select new file...")
+        os.execv(sys.executable, [sys.executable, sys.argv[0]])
     
     def run(self):
         """Main execution flow"""
-        # Select file
-        filename = self.select_file()
+        # Determine filename
+        if self.initial_file:
+            filename = self.initial_file
+        else:
+            filename = self.select_file()
+            
         if not filename:
             print("No file selected. Exiting.")
             return
@@ -275,7 +286,12 @@ def main():
     print("=" * 60)
     print()
     
-    viewer = LogViewer()
+    # Check for command line argument
+    initial_file = None
+    if len(sys.argv) > 1:
+        initial_file = sys.argv[1]
+        
+    viewer = LogViewer(initial_file)
     viewer.run()
 
 if __name__ == "__main__":
