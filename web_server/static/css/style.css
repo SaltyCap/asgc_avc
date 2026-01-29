@@ -48,7 +48,7 @@ body {
     background: rgba(255, 255, 255, 0.1);
     backdrop-filter: blur(10px);
     border-radius: 24px;
-    padding: 40px 30px;
+    padding: 30px 20px;
     box-shadow: 0 8px 32px rgba(0, 0, 0, 0.3);
     border: 1px solid rgba(255, 255, 255, 0.2);
 }
@@ -165,7 +165,7 @@ body {
     transform: scale(0.95);
 }
 
-.start-btn { 
+.start-btn {
     background: linear-gradient(135deg, #10b981 0%, #059669 100%);
 }
 
@@ -173,7 +173,7 @@ body {
     box-shadow: 0 6px 25px rgba(16, 185, 129, 0.5);
 }
 
-.stop-btn { 
+.stop-btn {
     background: linear-gradient(135deg, #ef4444 0%, #dc2626 100%);
 }
 
@@ -198,12 +198,10 @@ body {
 
 #transcript-container {
     margin-top: 20px;
-    padding: 25px;
-    background: rgba(255, 255, 255, 0.15);
-    border-radius: 16px;
-    min-height: 100px;
-    backdrop-filter: blur(10px);
-    border: 1px solid rgba(255, 255, 255, 0.2);
+    padding: 15px;
+    background: rgba(255, 255, 255, 0.08);
+    border-radius: 12px;
+    min-height: 80px;
 }
 
 #transcript {
@@ -211,37 +209,37 @@ body {
     line-height: 1.6;
     color: #fff;
     text-align: center;
+    margin: 20px 0;
+    padding: 15px;
+    background: rgba(255, 255, 255, 0.08);
+    border-radius: 12px;
+    min-height: 80px;
 }
 
-/* Throttle Control */
+/* Power/PWM Limit Control */
 .throttle-control {
     margin: 20px 0;
-    padding: 20px;
-    background: rgba(255, 255, 255, 0.15);
-    border-radius: 16px;
-    backdrop-filter: blur(10px);
-    border: 1px solid rgba(255, 255, 255, 0.2);
+    padding: 12px;
+    background: rgba(255, 255, 255, 0.05);
+    border-radius: 10px;
 }
 
 .throttle-header {
     display: flex;
     justify-content: space-between;
     align-items: center;
-    margin-bottom: 12px;
+    margin: 20px 0 10px 0;
 }
 
 .throttle-label {
-    font-size: 1rem;
-    font-weight: 600;
-    color: rgba(255, 255, 255, 0.95);
+    font-size: 0.9rem;
+    color: rgba(255, 255, 255, 0.7);
 }
 
 .throttle-value {
     font-size: 1.2rem;
     font-weight: 700;
-    color: #10b981;
-    min-width: 60px;
-    text-align: right;
+    color: #60a5fa;
 }
 
 .throttle-slider {
@@ -253,7 +251,6 @@ body {
     -webkit-appearance: none;
     appearance: none;
     cursor: pointer;
-    margin: 10px 0;
 }
 
 .throttle-slider::-webkit-slider-thumb {
@@ -262,14 +259,13 @@ body {
     width: 24px;
     height: 24px;
     border-radius: 50%;
-    background: linear-gradient(135deg, #10b981 0%, #059669 100%);
+    background: linear-gradient(135deg, #3b82f6 0%, #2563eb 100%);
     cursor: pointer;
-    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.3);
-    transition: all 0.2s ease;
+    box-shadow: 0 2px 10px rgba(59, 130, 246, 0.5);
+    transition: transform 0.2s ease;
 }
 
 .throttle-slider::-webkit-slider-thumb:hover {
-    box-shadow: 0 4px 12px rgba(16, 185, 129, 0.6);
     transform: scale(1.1);
 }
 
@@ -277,24 +273,25 @@ body {
     width: 24px;
     height: 24px;
     border-radius: 50%;
-    background: linear-gradient(135deg, #10b981 0%, #059669 100%);
+    background: linear-gradient(135deg, #3b82f6 0%, #2563eb 100%);
     cursor: pointer;
     border: none;
-    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.3);
-    transition: all 0.2s ease;
-}
-
-.throttle-slider::-moz-range-thumb:hover {
-    box-shadow: 0 4px 12px rgba(16, 185, 129, 0.6);
-    transform: scale(1.1);
+    box-shadow: 0 2px 10px rgba(59, 130, 246, 0.5);
 }
 
 .throttle-info {
     display: flex;
     justify-content: space-between;
-    font-size: 0.75rem;
+    margin-top: 12px;
+    margin-bottom: 20px;
+    padding-top: 10px;
+    border-top: 1px solid rgba(255, 255, 255, 0.1);
+    font-size: 0.85rem;
     color: rgba(255, 255, 255, 0.6);
-    margin-top: 5px;
+}
+
+.throttle-info strong {
+    color: #60a5fa;
 }
 
 .recording-pulse {
@@ -302,13 +299,15 @@ body {
 }
 
 @keyframes pulse {
-    0% { 
+    0% {
         box-shadow: 0 0 0 0 rgba(239, 68, 68, 0.7);
     }
-    70% { 
+
+    70% {
         box-shadow: 0 0 0 25px rgba(239, 68, 68, 0);
     }
-    100% { 
+
+    100% {
         box-shadow: 0 0 0 0 rgba(239, 68, 68, 0);
     }
 }
@@ -389,8 +388,15 @@ body {
 }
 
 @keyframes blink {
-    0%, 100% { opacity: 1; }
-    50% { opacity: 0.3; }
+
+    0%,
+    100% {
+        opacity: 1;
+    }
+
+    50% {
+        opacity: 0.3;
+    }
 }
 
 /* Queue Panel Styles */
@@ -422,10 +428,13 @@ body {
 }
 
 @keyframes blink-red {
-    0%, 100% {
+
+    0%,
+    100% {
         background: rgba(239, 68, 68, 0.9);
         box-shadow: 0 0 15px rgba(239, 68, 68, 0.7);
     }
+
     50% {
         background: rgba(239, 68, 68, 0.4);
         box-shadow: 0 0 5px rgba(239, 68, 68, 0.3);
@@ -437,9 +446,7 @@ body {
     flex-direction: column;
     align-items: center;
     gap: 10px;
-    padding: 15px;
-    background: rgba(255, 255, 255, 0.1);
-    border-radius: 12px;
+    padding: 10px 0;
     margin-bottom: 15px;
 }
 
@@ -456,6 +463,7 @@ body {
     border: 2px solid rgba(255, 255, 255, 0.2);
     border-radius: 10px;
     transition: all 0.3s ease;
+    margin: 0 auto 10px auto;
 }
 
 .queue-slot.active {
@@ -467,15 +475,38 @@ body {
 }
 
 @keyframes pulse-slot {
-    0%, 100% { transform: scale(1); box-shadow: 0 0 0 0 rgba(255, 255, 255, 0.4); }
-    50% { transform: scale(1.02); box-shadow: 0 0 15px 0 rgba(255, 255, 255, 0.2); }
+
+    0%,
+    100% {
+        transform: scale(1);
+        box-shadow: 0 0 0 0 rgba(255, 255, 255, 0.4);
+    }
+
+    50% {
+        transform: scale(1.02);
+        box-shadow: 0 0 15px 0 rgba(255, 255, 255, 0.2);
+    }
 }
 
-.queue-slot.red { background: linear-gradient(135deg, #ef4444 0%, #dc2626 100%); }
-.queue-slot.yellow { background: linear-gradient(135deg, #eab308 0%, #ca8a04 100%); }
-.queue-slot.blue { background: linear-gradient(135deg, #3b82f6 0%, #2563eb 100%); }
-.queue-slot.green { background: linear-gradient(135deg, #22c55e 0%, #16a34a 100%); }
-.queue-slot.center { background: linear-gradient(135deg, #a855f7 0%, #9333ea 100%); }
+.queue-slot.red {
+    background: linear-gradient(135deg, #ef4444 0%, #dc2626 100%);
+}
+
+.queue-slot.yellow {
+    background: linear-gradient(135deg, #eab308 0%, #ca8a04 100%);
+}
+
+.queue-slot.blue {
+    background: linear-gradient(135deg, #3b82f6 0%, #2563eb 100%);
+}
+
+.queue-slot.green {
+    background: linear-gradient(135deg, #22c55e 0%, #16a34a 100%);
+}
+
+.queue-slot.center {
+    background: linear-gradient(135deg, #a855f7 0%, #9333ea 100%);
+}
 
 .slot-number {
     font-size: 1.2rem;

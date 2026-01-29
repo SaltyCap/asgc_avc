@@ -1,5 +1,6 @@
 <!DOCTYPE html>
 <html lang="en">
+
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
@@ -166,6 +167,7 @@
         }
     </style>
 </head>
+
 <body>
     <div class="connection-status">
         <div class="status-dot" id="statusDot"></div>
@@ -188,7 +190,16 @@
             <strong>Heading:</strong> <span id="heading">--</span>
         </div>
         <div class="status-item">
-            <strong>Mode:</strong> <span id="mode">--</span>
+            <strong>Target:</strong> <span id="targetName">--</span>
+        </div>
+    </div>
+
+    <!-- Queue Display -->
+    <div
+        style="width: 100%; max-width: 500px; margin-bottom: 10px; background: rgba(0,0,0,0.3); padding: 10px; border-radius: 8px;">
+        <div style="font-size: 0.9rem; margin-bottom: 5px; color: #aaa;">QUEUE:</div>
+        <div id="queueList" style="display: flex; gap: 8px; overflow-x: auto; padding-bottom: 5px;">
+            <span style="color: #666;">Empty</span>
         </div>
     </div>
 
@@ -229,7 +240,8 @@
             y: 15,
             heading: 90,
             mode: 'idle',
-            target: null
+            target: null,
+            targetName: '--'
         };
 
         // Canvas settings
@@ -385,7 +397,7 @@
 
             // Draw target line if navigating
             if (robotState.target) {
-                ctx.strokeStyle = 'rgba(251, 191, 36, 0.5)';
+                ctx.strokeStyle = 'rgba(251, 191, 36, 0.8)';
                 ctx.lineWidth = 2;
                 ctx.setLineDash([5, 5]);
                 ctx.beginPath();
@@ -393,7 +405,33 @@
                 ctx.lineTo(toCanvasX(robotState.target[0]), toCanvasY(robotState.target[1]));
                 ctx.stroke();
                 ctx.setLineDash([]);
+
+                // Draw target marker
+                ctx.fillStyle = 'rgba(251, 191, 36, 0.4)';
+                ctx.beginPath();
+                ctx.arc(toCanvasX(robotState.target[0]), toCanvasY(robotState.target[1]), 6, 0, 2 * Math.PI);
+                ctx.fill();
             }
+        }
+
+        function updateQueueDisplay(queue, queueRunning) {
+            const list = document.getElementById('queueList');
+            list.innerHTML = '';
+
+            if (!queue || queue.length === 0) {
+                list.innerHTML = '<span style="color: #666;">Empty</span>';
+                return;
+            }
+
+            queue.forEach((item, index) => {
+                const el = document.createElement('div');
+                el.style.background = index === 0 && queueRunning ? '#22c55e' : 'rgba(255,255,255,0.1)';
+                el.style.padding = '4px 8px';
+                el.style.borderRadius = '4px';
+                el.style.fontSize = '0.85rem';
+                el.textContent = item.target;
+                list.appendChild(el);
+            });
         }
 
         function updateStatus() {
@@ -405,16 +443,24 @@
                         robotState.y = data.y;
                         robotState.heading = data.heading;
                         robotState.mode = data.mode || 'idle';
-                        robotState.target = data.target;
+                        // Use current_target if available (added in backend)
+                        robotState.target = data.current_target;
 
                         document.getElementById('position').textContent = `(${data.x.toFixed(1)}, ${data.y.toFixed(1)})`;
                         document.getElementById('heading').textContent = `${data.heading.toFixed(0)}°`;
-                        document.getElementById('mode').textContent = robotState.mode;
 
+                        // Update target name
+                        if (data.queue && data.queue.length > 0 && data.queue_running) {
+                            document.getElementById('targetName').textContent = data.queue[0].target;
+                        } else {
+                            document.getElementById('targetName').textContent = '--';
+                        }
+
+                        updateQueueDisplay(data.queue, data.queue_running);
                         drawCourse();
                     }
                 })
-                .catch(() => {});
+                .catch(() => { });
         }
 
         function loadCourseConfig() {
@@ -452,7 +498,8 @@
         connectWebSocket();
         loadCourseConfig();
         updateStatus();
-        setInterval(updateStatus, 500);
+        setInterval(updateStatus, 33); // 30 Hz update rate (~33ms)
     </script>
 </body>
+
 </html>

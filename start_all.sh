@@ -8,19 +8,8 @@ SCRIPT_DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd )"
 echo "Starting AVC Project..."
 
 # 0. Check and start pigpiod daemon
-echo "Checking pigpio daemon..."
-if ! pgrep -x pigpiod > /dev/null; then
-    echo "Starting pigpio daemon..."
-    if sudo pigpiod; then
-        echo "pigpiod started successfully."
-        sleep 1  # Give pigpiod time to initialize
-    else
-        echo "Error: Failed to start pigpiod. Motor control will not work."
-        exit 1
-    fi
-else
-    echo "pigpiod already running."
-fi
+# pigpiod check removed as it is not used by the current C implementation
+
 
 # 1. Set I2C Speed
 echo "Setting I2C speed to 400kHz..."

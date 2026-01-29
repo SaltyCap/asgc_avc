@@ -3,14 +3,15 @@ import vosk
 from flask_sock import Sock
 from .config import Config
 from .motor_interface import motor_interface
+from .voice_command import VoiceCommandProcessor
 
 sock = Sock()
 
 # Global model variable (loaded in create_app or lazily)
 model = None
 
-# Vocabulary for voice commands (includes sound-alike words)
-VOCABULARY = '["red", "read", "bread", "wed", "blue", "blew", "green", "yellow", "yell", "center", "middle", "centre", "stop", "clear", "forward", "back", "backward", "reverse", "left", "right", "motor", "one", "two", "start", "reset", "position", "[unk]"]'
+# Global set of connected motor control WebSocket clients
+motor_clients = set()
 
 def init_model():
     global model
@@ -39,9 +40,8 @@ def audio_socket(ws):
     vosk.SetLogLevel(-1)
 
     # Try to create recognizer with vocabulary constraint
-    # Fall back to standard recognizer if model doesn't support it
     try:
-        recognizer = vosk.KaldiRecognizer(model, 16000, VOCABULARY)
+        recognizer = vosk.KaldiRecognizer(model, 16000, Config.VOCABULARY)
     except Exception:
         print("Model doesn't support vocabulary constraint, using full recognition")
         recognizer = vosk.KaldiRecognizer(model, 16000)
@@ -50,6 +50,9 @@ def audio_socket(ws):
     recognizer.SetWords(False)
     recording = False
     last_partial = ""
+    
+    # Initialize voice processor
+    voice_processor = VoiceCommandProcessor(motor_interface.nav_controller)
 
     try:
         while True:
@@ -61,6 +64,8 @@ def audio_socket(ws):
                     # Reset recognizer state instead of creating new one
                     recognizer.Reset()
                     last_partial = ""
+                    # Ensure processor has latest controller reference
+                    voice_processor.nav_controller = motor_interface.nav_controller
                     print("\n--- Recording Started ---")
                 elif message == 'stop':
                     recording = False
@@ -70,7 +75,7 @@ def audio_socket(ws):
                         final_text = final_result['text']
                         print(f"Final: {final_text}\n")
                         ws.send(json.dumps({'type': 'final', 'text': final_text}))
-                        process_voice_command(final_text)
+                        voice_processor.process_command(final_text)
 
             elif isinstance(message, bytes) and recording:
                 # Pass bytes directly - no numpy conversion needed
@@ -80,7 +85,7 @@ def audio_socket(ws):
                         final_text = result['text']
                         print(f"\nFinal: {final_text}")
                         ws.send(json.dumps({'type': 'final', 'text': final_text}))
-                        process_voice_command(final_text)
+                        voice_processor.process_command(final_text)
                 else:
                     # Only send partial if it changed (reduces WebSocket traffic)
                     partial_result = json.loads(recognizer.PartialResult())
@@ -100,9 +105,15 @@ def motor_socket(ws):
     """Handles WebSocket connection for motor control."""
     print("Motor control client connected.")
 
+    # Add client to the set of connected clients
+    motor_clients.add(ws)
+
     # Control mode: 'joystick' = direct PWM, 'voice' = voice/navigation commands
     # Default to 'voice' mode (index.html and course_view.html)
     control_mode = 'voice'
+    
+    # Initialize helper
+    voice_processor = VoiceCommandProcessor(motor_interface.nav_controller)
 
     try:
         while True:
@@ -126,9 +137,30 @@ def motor_socket(ws):
                     if msg_type == 'set_speed':
                         speed_percent = data.get('speed_percent', 100)
                         speed_percent = max(0, min(100, int(speed_percent)))
-                        nav_controller.set_speed_multiplier(speed_percent / 100.0)
+                        if motor_interface.nav_controller:
+                            motor_interface.nav_controller.set_speed_multiplier(speed_percent / 100.0)
                         print(f"Speed multiplier set to: {speed_percent}%")
                         ws.send(json.dumps({'type': 'speed_set', 'speed_percent': speed_percent}))
+                        continue
+
+                    # Handle PWM settings (works in both modes)
+                    if msg_type == 'set_pwm':
+                        min_pwm = data.get('min_pwm', 45)
+                        max_pwm = data.get('max_pwm', 80)
+                        min_pwm = max(20, min(100, int(min_pwm)))
+                        max_pwm = max(20, min(100, int(max_pwm)))
+                        # Send command to C program
+                        motor_interface.send_command(f"setpwm {min_pwm} {max_pwm}")
+                        print(f"PWM settings: Min={min_pwm}%, Max={max_pwm}%")
+
+                        # Broadcast to all connected motor control clients
+                        pwm_message = json.dumps({'type': 'pwm_set', 'min_pwm': min_pwm, 'max_pwm': max_pwm})
+                        for client in list(motor_clients):  # Use list() to avoid modification during iteration
+                            try:
+                                client.send(pwm_message)
+                            except Exception as e:
+                                print(f"Failed to broadcast PWM to client: {e}")
+                                motor_clients.discard(client)
                         continue
 
                     # Handle commands based on control mode
@@ -158,14 +190,12 @@ def motor_socket(ws):
                             # Voice mode: only allow voice commands and navigation
                             if msg_type == 'voice':
                                 command = data.get('command', '').lower()
-                                process_voice_command(command)
+                                # Ensure processor has latest controller reference
+                                voice_processor.nav_controller = motor_interface.nav_controller
+                                voice_processor.process_command(command)
 
                             elif msg_type == 'stop':
                                 motor_interface.send_command("stop")
-
-                            elif msg_type == 'select_motor':
-                                motor = data.get('motor', 1)
-                                motor_interface.send_command(str(motor))
 
                             elif msg_type == 'joystick':
                                 print("Joystick commands not allowed in voice mode")
@@ -185,88 +215,6 @@ def motor_socket(ws):
     except Exception as e:
         print(f"Motor control client error or disconnected: {e}")
     finally:
+        # Remove client from the set of connected clients
+        motor_clients.discard(ws)
         print("Motor control client disconnected.")
-
-def process_voice_command(command):
-    """Process voice commands and convert to motor commands.
-
-    Parses each word in the command string and queues valid commands.
-    Example: "red blue green" will queue 3 separate commands.
-    """
-    nav_controller = motor_interface.nav_controller
-    command = command.strip().lower()
-    words = command.split()
-
-    print(f"[VOICE COMMAND] '{command}'")
-
-    # Valid commands that can be queued (colors + center)
-    # Includes sound-alike aliases for better recognition
-    queue_commands = {
-        'red': 'red',
-        'read': 'red',
-        'bread': 'red',
-        'wed': 'red',
-        'blue': 'blue',
-        'blew': 'blue',
-        'green': 'green',
-        'yellow': 'yellow',
-        'yell': 'yellow',
-        'center': 'center',
-        'middle': 'center',
-        'centre': 'center',
-    }
-
-    # Immediate action commands (not queued, executed right away)
-    immediate_commands = {'clear', 'stop', 'reset'}
-
-    queued_count = 0
-
-    if not nav_controller:
-        print("[VOICE] ERROR: Navigation controller not initialized!")
-        return
-
-    for word in words:
-        print(f"[VOICE] Processing word: '{word}'")
-
-        # Check for immediate commands first
-        if word == 'clear':
-            nav_controller.clear_queue()
-            print("[VOICE] Queue cleared")
-            return  # Stop processing after clear
-
-        elif word == 'stop':
-            nav_controller.clear_queue()
-            print("[VOICE] Queue stopped and cleared")
-            return  # Stop processing after stop
-
-        elif word == 'start':
-            nav_controller.start_queue()
-            print("[VOICE] Queue started")
-            return  # Stop processing after start
-
-        # Check if word is a valid queue command
-        elif word in queue_commands:
-            target = queue_commands[word]
-            print(f"[VOICE] Found valid command: '{word}' -> '{target}'", flush=True)
-            try:
-                if target == 'center':
-                    print(f"[VOICE] Calling go_to_center()...", flush=True)
-                    nav_controller.go_to_center()
-                    print(f"[VOICE] go_to_center() returned", flush=True)
-                else:
-                    print(f"[VOICE] Calling go_to_bucket('{target}')...", flush=True)
-                    nav_controller.go_to_bucket(target)
-                    print(f"[VOICE] go_to_bucket() returned", flush=True)
-                queued_count += 1
-                print(f"[VOICE] Successfully queued: {target}", flush=True)
-            except Exception as e:
-                import traceback
-                print(f"[VOICE] ERROR queueing {target}: {e}", flush=True)
-                traceback.print_exc()
-        else:
-            print(f"[VOICE] Skipping unknown word: '{word}'")
-
-    if queued_count > 0:
-        print(f"[VOICE] Total queued: {queued_count} commands")
-    elif not any(word in immediate_commands for word in words):
-        print(f"[VOICE] No valid commands found in: '{command}'")

@@ -1,12 +1,9 @@
-from flask import Blueprint, render_template, jsonify, request
+from flask import Blueprint, render_template, jsonify
 from .config import Config
 from .motor_interface import motor_interface
 
-# We will need a way to access the nav_controller. 
-# Since we haven't defined where it lives yet, let's assume it's accessible via motor_interface 
-# or we import a global from the package (circular import risk).
-# Better: attach it to motor_interface or use a shared state module.
-# For now, let's access it through motor_interface.nav_controller
+# Note: nav_controller is accessed via motor_interface.nav_controller
+# This avoids circular imports and ensures we use the active controller instance.
 
 bp = Blueprint('main', __name__)
 

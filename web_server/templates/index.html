@@ -1,11 +1,13 @@
 <!DOCTYPE html>
 <html lang="en">
+
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
     <title>ASGC Voice Control</title>
     <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}">
 </head>
+
 <body>
     <div class="connection-status">
         <div class="status-dot" id="statusDot"></div>
@@ -18,84 +20,73 @@
             <div class="subtitle">Arkansas Space Grant Commission</div>
         </div>
 
-        <!-- Command Center Section -->
-        <div class="section">
-            <div class="section-title">🎛️ Command Center</div>
-
-            <!-- Control Buttons Row -->
-            <div class="control-row">
-                <div class="control-group">
-                    <span class="control-label">Voice:</span>
-                    <button id="voiceStartButton" class="control-button start-btn">Start</button>
-                    <button id="voiceStopButton" class="control-button stop-btn">Stop</button>
-                    <span class="status-indicator" id="voiceStatusDot"></span>
-                </div>
-                <div class="control-group">
-                    <span class="control-label">Queue:</span>
-                    <button id="carStartButton" class="control-button start-btn">Start</button>
-                    <button id="carStopButton" class="control-button stop-btn">Stop</button>
-                    <span class="status-indicator" id="carStatusDot"></span>
-                </div>
+        <!-- Control Buttons Row -->
+        <div class="control-row">
+            <div class="control-group">
+                <span class="control-label">Voice:</span>
+                <button id="voiceStartButton" class="control-button start-btn">Start</button>
+                <button id="voiceStopButton" class="control-button stop-btn">Stop</button>
+                <span class="status-indicator" id="voiceStatusDot"></span>
             </div>
-
-            <!-- Status Display -->
-            <div class="status-row">
-                <span id="voiceStatusText">Connecting...</span>
-                <span class="status-divider">|</span>
-                <span id="carStatusText">Queue: Stopped</span>
+            <div class="control-group">
+                <span class="control-label">Queue:</span>
+                <button id="carStartButton" class="control-button start-btn">Start</button>
+                <button id="carStopButton" class="control-button stop-btn">Stop</button>
+                <span class="status-indicator" id="carStatusDot"></span>
             </div>
-
-            <!-- Transcript -->
-            <div id="transcript-container">
-                <p id="transcript"><em>Transcribed text will appear here...</em></p>
-            </div>
-
-            <!-- Throttle Control -->
-            <div class="throttle-control">
-                <div class="throttle-header">
-                    <span class="throttle-label">Throttle</span>
-                    <span class="throttle-value" id="throttleValue">100%</span>
-                </div>
-                <input type="range" min="0" max="100" value="100" step="5" class="throttle-slider" id="throttleSlider">
-                <div class="throttle-info">
-                    <span>0%</span>
-                    <span>50%</span>
-                    <span>100%</span>
-                </div>
-            </div>
-
-            <!-- Command Queue -->
-            <div class="queue-header">
-                <span class="queue-status" id="queueStatus">Idle</span>
-            </div>
-            <div class="queue-slots">
-                <div class="queue-slot" id="slot0">
-                    <span class="slot-number">1</span>
-                    <span class="slot-label">---</span>
-                </div>
-                <div class="queue-slot" id="slot1">
-                    <span class="slot-number">2</span>
-                    <span class="slot-label">---</span>
-                </div>
-                <div class="queue-slot" id="slot2">
-                    <span class="slot-number">3</span>
-                    <span class="slot-label">---</span>
-                </div>
-                <div class="queue-slot" id="slot3">
-                    <span class="slot-number">4</span>
-                    <span class="slot-label">---</span>
-                </div>
-                <div class="queue-slot" id="slot4">
-                    <span class="slot-number">5</span>
-                    <span class="slot-label">---</span>
-                </div>
-            </div>
-            <div class="queue-buttons">
-                <button id="clearQueueBtn" class="queue-btn clear-queue-btn">CLEAR</button>
-                <button id="resetPosBtn" class="queue-btn reset-queue-btn">RESET</button>
-            </div>
-            <p class="queue-hint">Say colors to queue | Voice: "start", "stop", "clear"</p>
         </div>
+
+        <!-- Status Display -->
+        <div class="status-row">
+            <span id="voiceStatusText">Connecting...</span>
+            <span class="status-divider">|</span>
+            <span id="carStatusText">Queue: Stopped</span>
+        </div>
+
+        <!-- Transcript -->
+        <p id="transcript"><em>Transcribed text will appear here...</em></p>
+
+        <!-- PWM Limit Control (also controls speed) -->
+        <div class="throttle-header">
+            <span class="throttle-label">PWM Limit</span>
+            <span class="throttle-value" id="pwmLimitValue">25%</span>
+        </div>
+        <input type="range" min="0" max="100" value="25" step="5" class="throttle-slider" id="pwmLimitSlider">
+        <div class="throttle-info">
+            <span>Min: <strong id="pwMinValue">1375</strong> µs</span>
+            <span>Center: <strong>1500</strong> µs</span>
+            <span>Max: <strong id="pwMaxValue">1625</strong> µs</span>
+        </div>
+
+        <!-- Command Queue -->
+        <div class="queue-header">
+            <span class="queue-status" id="queueStatus">Idle</span>
+        </div>
+        <div class="queue-slot" id="slot0">
+            <span class="slot-number">1</span>
+            <span class="slot-label">---</span>
+        </div>
+        <div class="queue-slot" id="slot1">
+            <span class="slot-number">2</span>
+            <span class="slot-label">---</span>
+        </div>
+        <div class="queue-slot" id="slot2">
+            <span class="slot-number">3</span>
+            <span class="slot-label">---</span>
+        </div>
+        <div class="queue-slot" id="slot3">
+            <span class="slot-number">4</span>
+            <span class="slot-label">---</span>
+        </div>
+        <div class="queue-slot" id="slot4">
+            <span class="slot-number">5</span>
+            <span class="slot-label">---</span>
+        </div>
+        <div class="queue-buttons">
+            <button id="clearQueueBtn" class="queue-btn clear-queue-btn">CLEAR</button>
+            <button id="resetPosBtn" class="queue-btn reset-queue-btn">RESET</button>
+        </div>
+        <p class="queue-hint">Say colors to queue | Voice: "start", "stop", "clear"</p>
 
         <!-- Navigation Buttons -->
         <div class="nav-buttons">
@@ -110,4 +101,5 @@
 
     <script src="{{ url_for('static', filename='js/main.js') }}"></script>
 </body>
+
 </html>

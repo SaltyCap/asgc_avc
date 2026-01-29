@@ -7,9 +7,11 @@
 #include <string.h>
 
 Motor motors[2];
-int PWM_CHIP = -1;
+EncoderState encoders[2];
+// Internal static variables
+static int PWM_CHIP = -1;
 
-int find_pwm_chip(void) {
+static int find_pwm_chip(void) {
     char path[256];
     for (int i = 0; i < 10; i++) {
         snprintf(path, sizeof(path), "/sys/class/pwm/pwmchip%d", i);
@@ -59,28 +61,76 @@ int pwm_init(void) {
         }
         dprintf(motors[i].pwm_enable_fd, "1");
 
+        motors[i].last_pulse_ns = NEUTRAL_NS;
+        motors[i].last_speed_update_time = 0;
+
         pthread_mutex_init(&motors[i].lock, NULL);
     }
     return 0;
 }
 
-void set_motor_speed(int motor_id, int speed_percent) {
+
+
+void set_motor_speed(int motor_id, int speed_percent, int immediate) {
     if (speed_percent > 100) speed_percent = 100;
     if (speed_percent < -100) speed_percent = -100;
 
-    int pulse_ns;
+    // Convert target speed_percent to target_pulse_ns
+    // Account for ESC deadband: forward starts at 1550us, reverse at 1450us
+    int target_pulse_ns;
     if (speed_percent > 0) {
-        pulse_ns = NEUTRAL_NS + (speed_percent * (FORWARD_MAX_NS - NEUTRAL_NS)) / 100;
+        // Map 0-100% to FORWARD_START_NS to FORWARD_MAX_NS
+        target_pulse_ns = FORWARD_START_NS + (speed_percent * (FORWARD_MAX_NS - FORWARD_START_NS)) / 100;
     } else if (speed_percent < 0) {
-        pulse_ns = NEUTRAL_NS - (abs(speed_percent) * (NEUTRAL_NS - REVERSE_MAX_NS)) / 100;
+        // Map 0-(-100%) to REVERSE_START_NS to REVERSE_MAX_NS
+        target_pulse_ns = REVERSE_START_NS - (abs(speed_percent) * (REVERSE_START_NS - REVERSE_MAX_NS)) / 100;
     } else {
-        pulse_ns = NEUTRAL_NS;
+        target_pulse_ns = NEUTRAL_NS;
     }
 
-    lseek(motors[motor_id].pwm_duty_fd, 0, SEEK_SET);
-    dprintf(motors[motor_id].pwm_duty_fd, "%d", pulse_ns);
+    // Ramp rate limiting (Nanoseconds domain)
+    // Limits the rate of change of the pulse width to prevent sudden jerks
+    // 500,000 ns range / 3 seconds = ~166,667 ns/sec
+    #define RAMP_NS_PER_SEC 166667.0
 
-    motors[motor_id].current_speed = speed_percent;
+    double current_time = get_time_sec();
+    double dt = current_time - motors[motor_id].last_speed_update_time;
+    int current_pulse_ns = motors[motor_id].last_pulse_ns;
+
+    if (!immediate && dt > 0 && motors[motor_id].last_speed_update_time > 0) {
+        int diff = target_pulse_ns - current_pulse_ns;
+        int max_change = (int)(RAMP_NS_PER_SEC * dt); 
+        
+        if (max_change < 1) max_change = 1; // Ensure some movement
+
+        if (abs(diff) > max_change) {
+            if (diff > 0) {
+                current_pulse_ns += max_change;
+            } else {
+                current_pulse_ns -= max_change;
+            }
+        } else {
+            current_pulse_ns = target_pulse_ns;
+        }
+    } else {
+        // Immediate update or first run
+        current_pulse_ns = target_pulse_ns;
+    }
+    
+    // Save state
+    motors[motor_id].last_pulse_ns = current_pulse_ns;
+    motors[motor_id].last_speed_update_time = current_time;
+
+    // Apply Output
+    int final_output_ns = current_pulse_ns;
+
+
+
+    if (motors[motor_id].pwm_duty_fd >= 0) {
+        lseek(motors[motor_id].pwm_duty_fd, 0, SEEK_SET);
+        dprintf(motors[motor_id].pwm_duty_fd, "%d", final_output_ns);
+    }
+    motors[motor_id].current_speed = speed_percent; // Store target for logging
 }
 
 void pwm_cleanup(void) {

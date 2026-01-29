@@ -18,18 +18,28 @@ class MotorInterface:
         self.nav_controller = nav_controller
         
         # Resolve absolute path to motor control program
-        # Config.get_motor_control_path() returns relative path from WebServer root
-        # We are in WebServer/app, so we need to go up one level
-        base_dir = os.path.dirname(os.path.dirname(__file__))
-        motor_path = os.path.join(base_dir, Config.get_motor_control_path().replace("../", ""))
+        # We assume the project structure:
+        # project_root/
+        #   web_server/
+        #     app/
+        #       motor_interface.py
+        #   c_code/
+        #     asgc_motor_control
         
-        # Fix path resolution if it's still relative to "c_code" which is a sibling of web_server
-        # The original code used os.path.dirname(__file__) which was web_server/web_server.py
-        # So "../c_code" meant going to parent of web_server.
-        # Here, base_dir is web_server. Parent is project root.
-        project_root = os.path.dirname(base_dir)
+        # Determine project root based on this file's location
+        app_dir = os.path.dirname(os.path.abspath(__file__))
+        web_server_dir = os.path.dirname(app_dir)
+        project_root = os.path.dirname(web_server_dir)
+        
         motor_exec_name = os.path.basename(Config.get_motor_control_path())
         motor_path = os.path.join(project_root, "c_code", motor_exec_name)
+        
+        # Verify the file exists and is executable
+        if not os.path.exists(motor_path):
+            # Fallback for different CWD scenarios
+            fallback_path = os.path.abspath(os.path.join(web_server_dir, "../c_code", motor_exec_name))
+            if os.path.exists(fallback_path):
+                motor_path = fallback_path
 
         if not os.path.exists(motor_path):
             print(f"ERROR: Motor control program not found at {motor_path}")
@@ -113,28 +123,18 @@ class MotorInterface:
         if not parts:
             return
 
-        if parts[0] == "COORDINATED_COMPLETE":
-            if hasattr(self.nav_controller, 'handle_coordinated_complete'):
-                self.nav_controller.handle_coordinated_complete()
-
-        elif parts[0] == "ENCODER" and len(parts) >= 4:
+        if parts[0] == "STATUS" and len(parts) >= 5:
             try:
-                motor_id = int(parts[1])
-                total_counts = int(parts[2])
-                current_angle = int(parts[3])
-                if hasattr(self.nav_controller, 'update_encoder_data'):
-                    self.nav_controller.update_encoder_data(motor_id, total_counts, current_angle)
-            except (ValueError, IndexError):
+                x = float(parts[1])
+                y = float(parts[2])
+                h = float(parts[3])
+                s = int(parts[4])
+                if hasattr(self.nav_controller, 'handle_status_update'):
+                    self.nav_controller.handle_status_update(x, y, h, s)
+            except ValueError:
                 pass
 
-        elif parts[0] == "COMPLETE" and len(parts) >= 3:
-            try:
-                motor_id = int(parts[1])
-                final_counts = int(parts[2])
-                if hasattr(self.nav_controller, 'handle_motor_complete'):
-                    self.nav_controller.handle_motor_complete(motor_id, final_counts)
-            except (ValueError, IndexError):
-                pass
+
 
 # Global instance
 motor_interface = MotorInterface()

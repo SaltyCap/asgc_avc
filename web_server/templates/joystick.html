@@ -353,13 +353,13 @@
         <div class="slider-container">
             <div class="slider-label">
                 <span>PWM Limit</span>
-                <span class="slider-value" id="pwmLimitValue">100%</span>
+                <span class="slider-value" id="pwmLimitValue">25%</span>
             </div>
-            <input type="range" min="0" max="100" value="100" step="5" class="pwm-slider" id="pwmLimitSlider">
+            <input type="range" min="0" max="100" value="25" step="5" class="pwm-slider" id="pwmLimitSlider">
             <div class="pulse-width-info">
-                <span>Min: <strong id="pwMinValue">1000</strong> µs</span>
+                <span>Min: <strong id="pwMinValue">1375</strong> µs</span>
                 <span>Center: <strong>1500</strong> µs</span>
-                <span>Max: <strong id="pwMaxValue">2000</strong> µs</span>
+                <span>Max: <strong id="pwMaxValue">1625</strong> µs</span>
             </div>
         </div>
 
@@ -392,7 +392,7 @@
         const pwmLimitValue = document.getElementById('pwmLimitValue');
         const pwMinValue = document.getElementById('pwMinValue');
         const pwMaxValue = document.getElementById('pwMaxValue');
-        let pwmLimit = 100; // 0-100, scales the output
+        let pwmLimit = 25; // 0-100, scales the output
 
         // PWM pulse width constants (in µs)
         const PW_NEUTRAL = 1500;
@@ -414,7 +414,31 @@
             pwmLimit = parseInt(e.target.value);
             pwmLimitValue.textContent = `${pwmLimit}%`;
             updatePulseWidthDisplay();
+            sendPwmSettings();
         });
+
+        function sendPwmSettings() {
+            // Calculate min/max PWM percentages from limit
+            const BASE_MIN_PWM = 45;
+            const BASE_MAX_PWM = 100;
+
+            let minPwm = Math.round(BASE_MIN_PWM * pwmLimit / 100);
+            let maxPwm = Math.round(BASE_MAX_PWM * pwmLimit / 100);
+
+            // Ensure minimum is at least 20% when limit > 0
+            if (pwmLimit > 0 && minPwm < 20) {
+                minPwm = 20;
+            }
+
+            if (motorWs && motorWs.readyState === WebSocket.OPEN) {
+                motorWs.send(JSON.stringify({
+                    type: 'set_pwm',
+                    min_pwm: minPwm,
+                    max_pwm: maxPwm
+                }));
+                console.log(`PWM Limit: ${pwmLimit}% (Min=${minPwm}%, Max=${maxPwm}%)`);
+            }
+        }
 
         // WebSocket connection for motor control
         let motorWs = null;
@@ -431,6 +455,8 @@
                 // Set control mode to joystick for direct PWM control
                 motorWs.send(JSON.stringify({ type: 'set_mode', mode: 'joystick' }));
                 updateConnectionStatus(true);
+                // Send current PWM limit settings
+                sendPwmSettings();
             };
 
             motorWs.onclose = () => {
@@ -447,7 +473,26 @@
             motorWs.onmessage = (event) => {
                 try {
                     const data = JSON.parse(event.data);
-                    console.log('Motor response:', data);
+
+                    // Handle PWM settings broadcast from server
+                    if (data.type === 'pwm_set') {
+                        const receivedMinPwm = data.min_pwm || 45;
+                        const receivedMaxPwm = data.max_pwm || 100;
+
+                        // Calculate the limit percentage from max_pwm (assuming BASE_MAX_PWM = 100)
+                        const calculatedLimit = Math.round((receivedMaxPwm / 100) * 100);
+
+                        // Update slider without triggering a send (avoid feedback loop)
+                        if (calculatedLimit !== pwmLimit) {
+                            pwmLimit = calculatedLimit;
+                            pwmLimitSlider.value = calculatedLimit;
+                            pwmLimitValue.textContent = `${calculatedLimit}%`;
+                            updatePulseWidthDisplay();
+                            console.log(`PWM limit synchronized to ${calculatedLimit}%`);
+                        }
+                    } else {
+                        console.log('Motor response:', data);
+                    }
                 } catch (e) {
                     console.error('Error parsing motor response:', e);
                 }

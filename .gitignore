@@ -39,8 +39,13 @@ Thumbs.db
 *.so
 c_code/build/
 
+# Motor control logs (can be large)
+logs/
+*.csv
+
 # Claude settings
 .claude/
 
 # Archive old files
 web_server/archive/
+c_code/asgc_motor_control

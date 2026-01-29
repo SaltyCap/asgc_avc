@@ -6,20 +6,20 @@ SRC_DIR = src
 OBJ_DIR = obj
 BIN_DIR = .
 
-SRCS = $(SRC_DIR)/main.c $(SRC_DIR)/motor.c $(SRC_DIR)/i2c.c $(SRC_DIR)/pid.c $(SRC_DIR)/common.c
-OBJS = $(patsubst $(SRC_DIR)/%.c, $(OBJ_DIR)/%.o, $(SRCS))
-TARGET = $(BIN_DIR)/mc2_coordinated
+SRCS = $(SRC_DIR)/main.c $(SRC_DIR)/motor.c $(SRC_DIR)/i2c.c $(SRC_DIR)/common.c $(SRC_DIR)/imu.c $(SRC_DIR)/kalman.c $(SRC_DIR)/sensors.c
+OBJS = $(patsubst src/%.c,obj/%.o,$(SRCS))
+TARGET = asgc_motor_control
 
 all: $(TARGET)
 
 $(TARGET): $(OBJS)
 	$(CC) $(OBJS) -o $@ $(LDFLAGS)
 
-$(OBJ_DIR)/%.o: $(SRC_DIR)/%.c
-	@mkdir -p $(OBJ_DIR)
+obj/%.o: src/%.c
+	@mkdir -p obj
 	$(CC) $(CFLAGS) -c $< -o $@
 
 clean:
-	rm -rf $(OBJ_DIR) $(TARGET)
+	rm -rf obj $(TARGET)
 
 .PHONY: all clean

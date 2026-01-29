@@ -30,16 +30,29 @@ const queueSlots = [
 ];
 let motorWs;
 
-// Throttle Control Variables
-const throttleSlider = document.getElementById('throttleSlider');
-const throttleValue = document.getElementById('throttleValue');
-let currentThrottle = 100;
+// PWM Limit Control Variables (also controls speed/throttle)
+const pwmLimitSlider = document.getElementById('pwmLimitSlider');
+const pwmLimitValue = document.getElementById('pwmLimitValue');
+const pwmMinValue = document.getElementById('pwMinValue');
+const pwmMaxValue = document.getElementById('pwMaxValue');
+let pwmLimit = 25; // 0-100%, scales the PWM output range
+
+// PWM pulse width constants (in microseconds)
+const PW_NEUTRAL = 1500;
+const PW_FORWARD_START = 1550;  // ESC deadband: forward starts here
+const PW_FORWARD_MAX = 2000;
+const PW_REVERSE_START = 1450;  // ESC deadband: reverse starts here
+const PW_REVERSE_MAX = 1000;
 
 // Connection Status Variables
 const statusDot = document.getElementById('statusDot');
 const statusText = document.getElementById('statusText');
 
 // ===== CAR CONTROL FUNCTIONS =====
+
+/**
+ * Starts the car navigation queue.
+ */
 function startCar() {
     carRunning = true;
     carStartButton.disabled = true;
@@ -52,6 +65,9 @@ function startCar() {
     startQueue();
 }
 
+/**
+ * Stops the car and clears the navigation queue.
+ */
 function stopCar() {
     carRunning = false;
     carStartButton.disabled = false;
@@ -65,6 +81,11 @@ function stopCar() {
 }
 
 // ===== VOICE CONTROL FUNCTIONS =====
+
+/**
+ * Updates the UI state for voice recording.
+ * @param {boolean} isRecording - Whether recording is active
+ */
 function setVoiceUIState(isRecording) {
     voiceStartButton.disabled = isRecording;
     voiceStopButton.disabled = !isRecording;
@@ -153,7 +174,7 @@ async function startVoiceRecording() {
     transcriptEl.textContent = 'Listening...';
 
     try {
-        const stream = await navigator.mediaDevices.getUserMedia({ 
+        const stream = await navigator.mediaDevices.getUserMedia({
             audio: {
                 sampleRate: 16000,
                 channelCount: 1,
@@ -164,13 +185,13 @@ async function startVoiceRecording() {
                 googAutoGainControl: true,
                 googNoiseSuppression: true,
                 googHighpassFilter: true
-            } 
+            }
         });
 
         audioContext = new (window.AudioContext || window.webkitAudioContext)({ sampleRate: 16000 });
         source = audioContext.createMediaStreamSource(stream);
         processor = audioContext.createScriptProcessor(2048, 1, 1);
-        
+
         processor.onaudioprocess = (e) => {
             if (ws && ws.readyState === WebSocket.OPEN) {
                 const float32Array = e.inputBuffer.getChannelData(0);
@@ -221,8 +242,42 @@ function connectMotorWebSocket() {
         console.log('Motor WebSocket connected');
         if (statusDot) statusDot.classList.add('connected');
         if (statusText) statusText.textContent = 'Connected';
-        // Send current throttle setting
-        sendThrottleSetting();
+        // Send current PWM limit (also sends speed/throttle)
+        updatePwmLimitDisplay();
+    };
+
+    motorWs.onmessage = (event) => {
+        try {
+            const data = JSON.parse(event.data);
+
+            // Handle PWM settings broadcast from server
+            if (data.type === 'pwm_set') {
+                // Update slider to match the new PWM limit
+                // Reverse-calculate limit from min_pwm and max_pwm
+                const receivedMinPwm = data.min_pwm || 45;
+                const receivedMaxPwm = data.max_pwm || 100;
+
+                // Calculate the limit percentage from max_pwm (assuming BASE_MAX_PWM = 100)
+                const calculatedLimit = Math.round((receivedMaxPwm / 100) * 100);
+
+                // Update slider without triggering a send (avoid feedback loop)
+                if (pwmLimitSlider && calculatedLimit !== pwmLimit) {
+                    pwmLimit = calculatedLimit;
+                    pwmLimitSlider.value = calculatedLimit;
+                    pwmLimitValue.textContent = `${calculatedLimit}%`;
+
+                    // Update pulse width display
+                    const minPwUs = Math.round(PW_NEUTRAL - (PW_NEUTRAL - PW_REVERSE_MAX) * pwmLimit / 100);
+                    const maxPwUs = Math.round(PW_NEUTRAL + (PW_FORWARD_MAX - PW_NEUTRAL) * pwmLimit / 100);
+                    pwMinValue.textContent = minPwUs;
+                    pwMaxValue.textContent = maxPwUs;
+
+                    console.log(`PWM limit synchronized to ${calculatedLimit}%`);
+                }
+            }
+        } catch (e) {
+            console.error('Error parsing motor WebSocket message:', e);
+        }
     };
 
     motorWs.onclose = () => {
@@ -239,6 +294,10 @@ function connectMotorWebSocket() {
     };
 }
 
+/**
+ * Sends a command string to the motor control WebSocket.
+ * @param {string} command - The command to send
+ */
 function sendQueueCommand(command) {
     if (motorWs && motorWs.readyState === WebSocket.OPEN) {
         motorWs.send(JSON.stringify({ type: 'voice', command: command }));
@@ -261,19 +320,65 @@ function resetPosition() {
     sendQueueCommand('reset position');
 }
 
-function updateThrottleDisplay() {
-    currentThrottle = parseInt(throttleSlider.value);
-    throttleValue.textContent = `${currentThrottle}%`;
-    sendThrottleSetting();
+function updatePwmLimitDisplay() {
+    if (!pwmLimitSlider) return; // Guard against missing element
+
+    pwmLimit = parseInt(pwmLimitSlider.value);
+    pwmLimitValue.textContent = `${pwmLimit}%`;
+
+    // Calculate the limited pulse width range based on slider
+    // At 0%: min = max = neutral (1500)
+    // At 100%: min = 1000, max = 2000 (full range)
+    // Scale proportionally around neutral, accounting for ESC deadband
+    const minPwUs = Math.round(PW_NEUTRAL - (PW_NEUTRAL - PW_REVERSE_MAX) * pwmLimit / 100);
+    const maxPwUs = Math.round(PW_NEUTRAL + (PW_FORWARD_MAX - PW_NEUTRAL) * pwmLimit / 100);
+
+    // Display pulse widths
+    pwMinValue.textContent = minPwUs;
+    pwMaxValue.textContent = maxPwUs;
+
+    // Convert pulse widths to PWM percentages for the C program
+    // The C program uses MIN_PWM and MAX_PWM as percentages (0-100)
+    // We want to map the active range to these percentages
+    // At 100% limit: min_pwm should be ~45%, max_pwm should be ~100%
+    // At 50% limit: range is narrower, so both values scale down
+
+    // Map pulse width range to PWM percent:
+    // Full reverse (1000us) to full forward (2000us) = 0% to 100% of available power
+    // Accounting for deadband: 1450-1550us is neutral zone
+
+    // For reverse: 1000-1450us maps to 0-45% PWM (minimum to overcome friction)
+    // For forward: 1550-2000us maps to 45-100% PWM
+
+    // Calculate effective min/max PWM percentages based on limit
+    // Base values: min=45%, max=100%
+    const BASE_MIN_PWM = 45;
+    const BASE_MAX_PWM = 100;
+
+    // Scale PWM values by limit percentage
+    // At 0% limit: both should be ~0 (no movement)
+    // At 100% limit: use base values
+    let minPwm = Math.round(BASE_MIN_PWM * pwmLimit / 100);
+    let maxPwm = Math.round(BASE_MAX_PWM * pwmLimit / 100);
+
+    // Ensure minimum is at least 20% when limit > 0, to overcome friction
+    if (pwmLimit > 0 && minPwm < 20) {
+        minPwm = 20;
+    }
+
+    sendPwmSettings(minPwm, maxPwm);
 }
 
-function sendThrottleSetting() {
+function sendPwmSettings(minPwm, maxPwm) {
     if (motorWs && motorWs.readyState === WebSocket.OPEN) {
+        // Send PWM limits (which now also controls speed)
         motorWs.send(JSON.stringify({
-            type: 'set_speed',
-            speed_percent: currentThrottle
+            type: 'set_pwm',
+            min_pwm: minPwm,
+            max_pwm: maxPwm
         }));
-        console.log(`Throttle set to ${currentThrottle}%`);
+
+        console.log(`Power Limit: ${pwmLimit}% (PWM: Min=${minPwm}%, Max=${maxPwm}%)`);
     }
 }
 
@@ -285,7 +390,7 @@ function fetchQueueStatus() {
                 updateQueueDisplay(data.queue || [], data.queue_running, data.target);
             }
         })
-        .catch(() => {});
+        .catch(() => { });
 }
 
 function updateQueueDisplay(queue, isRunning, currentTarget) {
@@ -371,8 +476,10 @@ document.addEventListener('DOMContentLoaded', () => {
     clearQueueBtn.addEventListener('click', clearQueue);
     resetPosBtn.addEventListener('click', resetPosition);
 
-    // Throttle slider initialization
-    throttleSlider.addEventListener('input', updateThrottleDisplay);
+    // Power limit slider initialization
+    if (pwmLimitSlider) {
+        pwmLimitSlider.addEventListener('input', updatePwmLimitDisplay);
+    }
 
     connectMotorWebSocket();
     fetchQueueStatus();

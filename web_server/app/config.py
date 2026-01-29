@@ -20,9 +20,9 @@ class Config:
     START_POSITION = (0, 15)
     START_HEADING = 90
 
-    # Robot physical parameters
-    WHEEL_DIAMETER_INCHES = 4.0
-    WHEELBASE_INCHES = 12.0
+    # Robot physical parameters (synchronized with c_code/include/common.h)
+    WHEEL_DIAMETER_INCHES = 5.3
+    WHEELBASE_INCHES = 16.0
 
     # Conversion factors
     INCHES_PER_FOOT = 12
@@ -44,7 +44,7 @@ class Config:
     
     @classmethod
     def get_motor_control_path(cls):
-        return "../c_code/mc2_coordinated"
+        return "../c_code/asgc_motor_control"
 
     @classmethod
     def get_bucket_position(cls, color):
@@ -67,3 +67,34 @@ class Config:
         """Calculate encoder counts needed to turn by specified degrees."""
         arc_length_inches = (abs(degrees) / 360.0) * 3.14159 * cls.WHEELBASE_INCHES
         return int(arc_length_inches * cls.COUNTS_PER_INCH)
+
+    # Voice Command Vocabulary (moved from sockets.py)
+    # Includes sound-alike words for robust recognition
+    VOCABULARY_LIST = [
+        "red", "read", "bread", "wed", 
+        "blue", "blew", 
+        "green", 
+        "yellow", "yell", 
+        "center", "middle", "centre", 
+        "stop", "clear", 
+        "forward", "back", "backward", "reverse", 
+        "left", "right", 
+        "motor", "one", "two", 
+        "start", "reset", "position", 
+        "[unk]"
+    ]
+    
+    # Format required by Vosk: '["word1", "word2", ...]'
+    VOCABULARY = str(VOCABULARY_LIST).replace("'", '"')
+
+    # Command Aliases mapping (alias -> canonical command)
+    COMMAND_ALIASES = {
+        'red': 'red', 'read': 'red', 'bread': 'red', 'wed': 'red',
+        'blue': 'blue', 'blew': 'blue',
+        'green': 'green',
+        'yellow': 'yellow', 'yell': 'yellow',
+        'center': 'center', 'middle': 'center', 'centre': 'center',
+    }
+
+    # Immediate action commands (not queued)
+    IMMEDIATE_COMMANDS = {'clear', 'stop', 'reset', 'start'}
