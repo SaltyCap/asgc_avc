@@ -13,9 +13,9 @@ typedef struct {
 } SensorData;
 
 // Read all sensors simultaneously using three separate I2C buses:
-//   - Left encoder on I2C1 (/dev/i2c-1) - GPIO 2/3 (Pins 3/5)
-//   - Right encoder on I2C2 (/dev/i2c-2) - GPIO 4/5 (Pins 7/29)
-//   - IMU on I2C3 (/dev/i2c-3) - GPIO 6/7 (Pins 31/26)
+//   - Left Encoder:  I2C3 (/dev/i2c-3)
+//   - Right Encoder: I2C1 (/dev/i2c-1)
+//   - IMU (MPU6050): I2C2 (/dev/i2c-2)
 // All three buses accessed in parallel for maximum performance
 // Timestamp is captured at the start of the read for precise synchronization
 SensorData read_all_sensors(void);

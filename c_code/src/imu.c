@@ -91,10 +91,14 @@ void imu_calibrate(int samples) {
     if (imu.i2c_fd < 0) return;
 
     printf("IMU: Calibrating Gyro (Do not move robot)...\n");
+    
+    // Allow gyro to settle after power-up
+    usleep(500000); // 500ms settling time
+    
     double sum = 0.0;
     
-    // Discard first few readings
-    for(int i=0; i<100; i++) {
+    // Discard first 200 readings to ensure gyro is stable
+    for(int i=0; i<200; i++) {
         imu_read_gyro_z(); 
         usleep(5000);
     }

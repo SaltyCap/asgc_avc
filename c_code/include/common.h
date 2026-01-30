@@ -22,6 +22,11 @@
 #define COUNTS_PER_INCH (COUNTS_PER_REV / WHEEL_CIRCUMFERENCE_INCHES)
 #define COUNTS_PER_FOOT (COUNTS_PER_INCH * INCHES_PER_FOOT)
 
+// Starting Configuration (Must match course_config.py)
+#define START_X 0.0
+#define START_Y 15.0
+#define START_HEADING 0.0
+
 
 // Time utilities
 // Time utilities

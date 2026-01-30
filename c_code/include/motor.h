@@ -28,12 +28,18 @@ typedef struct {
 } Motor;
 
 typedef struct {
-    int32_t total_counts;      // Accumulated counts (mult-turn)
+    int32_t total_counts;      // Accumulated counts (mult-turn) - DEPRECATED, use rotation-based calculation
     int16_t current_raw_angle; // Current 0-4095 angle
-    int16_t last_raw_angle;    // Previous angle for wrap detection
     int16_t start_raw_angle;   // Angle at start of move
+    
+    // Rotation-based tracking
+    int32_t rotation_count;    // Number of complete rotations
+    int8_t motor_state;        // Current motor direction: -1 (reverse), 0 (neutral), 1 (forward)
+    int8_t last_motor_state;   // Previous motor direction for rotation detection
+    int16_t last_raw_angle;    // Previous raw angle for rotation boundary detection
 
     int32_t target_counts;     // Target relative distance
+    int32_t move_start_counts; // Total counts at start of current move (for relative tracking)
     int has_target;            // Flag
 
     // Stall detection
@@ -54,6 +60,14 @@ extern NavigationController nav_ctrl;
 int pwm_init(void);
 void pwm_cleanup(void);
 void set_motor_speed(int motor_id, int speed_percent, int immediate);
+
+// Motor state accessor functions
+int8_t get_left_motor_state(void);   // Returns -1 (reverse), 0 (neutral), 1 (forward)
+int8_t get_right_motor_state(void);  // Returns -1 (reverse), 0 (neutral), 1 (forward)
+int32_t get_left_rotation_count(void);
+int32_t get_right_rotation_count(void);
+int32_t get_left_position(void);     // Returns 4095 * rotation_count + current_value
+int32_t get_right_position(void);    // Returns 4095 * rotation_count + current_value
 
 
 

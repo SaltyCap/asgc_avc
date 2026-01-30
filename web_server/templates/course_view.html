@@ -238,7 +238,7 @@
         let robotState = {
             x: 0,
             y: 15,
-            heading: 90,
+            heading: 0,  // Car points in +X direction (East)
             mode: 'idle',
             target: null,
             targetName: '--'
@@ -248,6 +248,7 @@
         const MARGIN = 30;
         let scale = 1;
         let displayWidth = 0;
+        let statusReceived = false;  // Flag to prevent rendering until we get server data
 
         // WebSocket for stop command
         let motorSocket = null;
@@ -298,6 +299,9 @@
         }
 
         function drawCourse() {
+            // Don't draw until we have real position data from server
+            if (!statusReceived) return;
+
             const playArea = courseConfig.playArea || PLAY_AREA;
 
             // Clear canvas
@@ -446,6 +450,8 @@
                         // Use current_target if available (added in backend)
                         robotState.target = data.current_target;
 
+                        statusReceived = true;  // Mark that we've received data
+
                         document.getElementById('position').textContent = `(${data.x.toFixed(1)}, ${data.y.toFixed(1)})`;
                         document.getElementById('heading').textContent = `${data.heading.toFixed(0)}°`;
 
@@ -474,11 +480,11 @@
                     courseConfig.playArea = PLAY_AREA;
                     courseConfig.border = BORDER;
                     resizeCanvas();
-                    drawCourse();
+                    // Don't draw yet - wait for status update
                 })
                 .catch(() => {
                     resizeCanvas();
-                    drawCourse();
+                    // Don't draw yet - wait for status update
                 });
         }
 

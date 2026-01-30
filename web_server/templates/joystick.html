@@ -1,5 +1,6 @@
 <!DOCTYPE html>
 <html lang="en">
+
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
@@ -316,6 +317,7 @@
         }
     </style>
 </head>
+
 <body>
     <div class="connection-status">
         <div class="status-dot" id="statusDot"></div>
@@ -355,7 +357,7 @@
                 <span>PWM Limit</span>
                 <span class="slider-value" id="pwmLimitValue">25%</span>
             </div>
-            <input type="range" min="0" max="100" value="25" step="5" class="pwm-slider" id="pwmLimitSlider">
+            <input type="range" min="5" max="100" value="25" step="5" class="pwm-slider" id="pwmLimitSlider">
             <div class="pulse-width-info">
                 <span>Min: <strong id="pwMinValue">1375</strong> µs</span>
                 <span>Center: <strong>1500</strong> µs</span>
@@ -532,9 +534,9 @@
         function getDirection(x, y) {
             const threshold = 20;
             if (Math.abs(x) < threshold && Math.abs(y) < threshold) return 'Center';
-            
+
             const angle = Math.atan2(y, x) * (180 / Math.PI);
-            
+
             if (angle >= -22.5 && angle < 22.5) return 'Right →';
             if (angle >= 22.5 && angle < 67.5) return 'Down-Right ↘';
             if (angle >= 67.5 && angle < 112.5) return 'Down ↓';
@@ -543,7 +545,7 @@
             if (angle >= -157.5 && angle < -112.5) return 'Up-Left ↖';
             if (angle >= -112.5 && angle < -67.5) return 'Up ↑';
             if (angle >= -67.5 && angle < -22.5) return 'Up-Right ↗';
-            
+
             return 'Center';
         }
 
@@ -566,10 +568,10 @@
             // Update values (normalized to -100 to 100)
             const normalizedX = Math.round((x / maxDistance) * 100);
             const normalizedY = Math.round((y / maxDistance) * 100);
-            
+
             xValue.textContent = normalizedX;
             yValue.textContent = -normalizedY; // Invert Y for intuitive up/down
-            
+
             direction.textContent = getDirection(normalizedX, -normalizedY);
 
             // TODO: Send control commands to car
@@ -581,7 +583,7 @@
             xValue.textContent = '0';
             yValue.textContent = '0';
             direction.textContent = 'Center';
-            
+
             // TODO: Send stop command to car
             sendCarCommand(0, 0);
         }
@@ -719,4 +721,5 @@
         window.addEventListener('resize', updateCenter);
     </script>
 </body>
+
 </html>

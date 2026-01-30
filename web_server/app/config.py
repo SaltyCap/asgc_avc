@@ -1,24 +1,18 @@
 import os
+import sys
+
+# Add parent directory to path to import course_config
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+from course_config import COURSE_WIDTH, COURSE_HEIGHT, BUCKETS, CENTER, START_POSITION, START_HEADING
 
 class Config:
-    # Course dimensions (feet) - 30x30 play area
-    COURSE_WIDTH = 30
-    COURSE_HEIGHT = 30
-
-    # Bucket locations (feet)
-    BUCKETS = {
-        'red': (0, 0),
-        'yellow': (0, 30),
-        'blue': (30, 30),
-        'green': (30, 0)
-    }
-
-    # Course center
-    CENTER = (15, 15)
-
-    # Starting position
-    START_POSITION = (0, 15)
-    START_HEADING = 90
+    # Course configuration (imported from course_config.py)
+    COURSE_WIDTH = COURSE_WIDTH
+    COURSE_HEIGHT = COURSE_HEIGHT
+    BUCKETS = BUCKETS
+    CENTER = CENTER
+    START_POSITION = START_POSITION
+    START_HEADING = START_HEADING  # Now linked to course_config.py
 
     # Robot physical parameters (synchronized with c_code/include/common.h)
     WHEEL_DIAMETER_INCHES = 5.3

@@ -88,6 +88,10 @@ void set_motor_speed(int motor_id, int speed_percent, int immediate) {
         target_pulse_ns = NEUTRAL_NS;
     }
 
+    // Explicit Check: Clamp to absolute limits
+    if (target_pulse_ns > FORWARD_MAX_NS) target_pulse_ns = FORWARD_MAX_NS;
+    if (target_pulse_ns < REVERSE_MAX_NS) target_pulse_ns = REVERSE_MAX_NS;
+
     // Ramp rate limiting (Nanoseconds domain)
     // Limits the rate of change of the pulse width to prevent sudden jerks
     // 500,000 ns range / 3 seconds = ~166,667 ns/sec
@@ -148,3 +152,57 @@ void pwm_cleanup(void) {
         pthread_mutex_destroy(&motors[i].lock);
     }
 }
+
+// Motor state accessor functions
+int8_t get_left_motor_state(void) {
+    int8_t state;
+    pthread_mutex_lock(&motors[0].lock);
+    state = encoders[0].motor_state;
+    pthread_mutex_unlock(&motors[0].lock);
+    return state;
+}
+
+int8_t get_right_motor_state(void) {
+    int8_t state;
+    pthread_mutex_lock(&motors[1].lock);
+    state = encoders[1].motor_state;
+    pthread_mutex_unlock(&motors[1].lock);
+    return state;
+}
+
+int32_t get_left_rotation_count(void) {
+    int32_t count;
+    pthread_mutex_lock(&motors[0].lock);
+    count = encoders[0].rotation_count;
+    pthread_mutex_unlock(&motors[0].lock);
+    return count;
+}
+
+int32_t get_right_rotation_count(void) {
+    int32_t count;
+    pthread_mutex_lock(&motors[1].lock);
+    count = encoders[1].rotation_count;
+    pthread_mutex_unlock(&motors[1].lock);
+    return count;
+}
+
+int32_t get_left_position(void) {
+    int32_t position;
+    pthread_mutex_lock(&motors[0].lock);
+    int32_t base = COUNTS_PER_REV * encoders[0].rotation_count;
+    int32_t offset = encoders[0].current_raw_angle - encoders[0].start_raw_angle;
+    position = base + offset;
+    pthread_mutex_unlock(&motors[0].lock);
+    return position;
+}
+
+int32_t get_right_position(void) {
+    int32_t position;
+    pthread_mutex_lock(&motors[1].lock);
+    int32_t base = COUNTS_PER_REV * encoders[1].rotation_count;
+    int32_t offset = encoders[1].current_raw_angle - encoders[1].start_raw_angle;
+    position = base + offset;
+    pthread_mutex_unlock(&motors[1].lock);
+    return position;
+}
+

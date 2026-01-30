@@ -28,24 +28,104 @@ class LogViewer:
         
     def select_file(self):
         """Open file dialog to select a log file"""
-        root = tk.Tk()
-        root.withdraw()
+        import tkinter as tk
+        from tkinter import ttk
         
         # Default to logs directory (../logs from tools/log_viewer.py)
         tools_dir = os.path.dirname(os.path.abspath(__file__))
         initial_dir = os.path.abspath(os.path.join(tools_dir, "../logs"))
         
-        filename = filedialog.askopenfilename(
-            title="Select Motor Control Log File",
-            initialdir=initial_dir,
-            filetypes=[
-                ("CSV files", "*.csv"),
-                ("All files", "*.*")
-            ]
-        )
+        # Get all CSV files sorted by modification time (newest first)
+        try:
+            csv_files = [f for f in os.listdir(initial_dir) if f.endswith('.csv')]
+            csv_files.sort(key=lambda x: os.path.getmtime(os.path.join(initial_dir, x)), reverse=True)
+        except Exception as e:
+            print(f"Error reading log directory: {e}")
+            csv_files = []
         
-        root.destroy()
-        return filename
+        if not csv_files:
+            print("No log files found!")
+            return None
+        
+        # Create custom selection dialog
+        root = tk.Tk()
+        root.title("Select Log File")
+        root.geometry("600x400")
+        
+        selected_file = [None]  # Use list to allow modification in nested function
+        
+        def on_select(event=None):
+            selection = listbox.curselection()
+            if selection:
+                idx = selection[0]
+                selected_file[0] = os.path.join(initial_dir, csv_files[idx])
+                root.destroy()
+        
+        def on_cancel():
+            root.destroy()
+        
+        # Create listbox with scrollbar
+        frame = ttk.Frame(root, padding="10")
+        frame.grid(row=0, column=0, sticky=(tk.W, tk.E, tk.N, tk.S))
+        
+        label = ttk.Label(frame, text="Select a log file (most recent first):", font=('Arial', 10, 'bold'))
+        label.grid(row=0, column=0, columnspan=2, sticky=tk.W, pady=(0, 10))
+        
+        scrollbar = ttk.Scrollbar(frame, orient=tk.VERTICAL)
+        listbox = tk.Listbox(frame, yscrollcommand=scrollbar.set, width=80, height=15, font=('Courier', 9))
+        scrollbar.config(command=listbox.yview)
+        
+        listbox.grid(row=1, column=0, sticky=(tk.W, tk.E, tk.N, tk.S))
+        scrollbar.grid(row=1, column=1, sticky=(tk.N, tk.S))
+        
+        # Add files with shortened names
+        for f in csv_files:
+            # Shorten filename: motor_log_voice_20260130_130252.csv -> voice_01/30_13:02
+            parts = f.replace('motor_log_', '').replace('.csv', '').split('_')
+            if len(parts) >= 3:
+                mode = parts[0]  # voice or joystick
+                date = parts[1]  # YYYYMMDD
+                time = parts[2]  # HHMMSS
+                
+                # Format: mode_MM/DD_HH:MM
+                month = date[4:6]
+                day = date[6:8]
+                hour = time[0:2]
+                minute = time[2:4]
+                
+                display_name = f"{mode:8s} {month}/{day} {hour}:{minute}"
+            else:
+                display_name = f  # Fallback to full name
+            
+            listbox.insert(tk.END, display_name)
+        
+        # Select first item by default
+        listbox.selection_set(0)
+        listbox.focus_set()
+        
+        # Bind double-click and Enter key
+        listbox.bind('<Double-Button-1>', on_select)
+        listbox.bind('<Return>', on_select)
+        
+        # Buttons
+        button_frame = ttk.Frame(frame)
+        button_frame.grid(row=2, column=0, columnspan=2, pady=(10, 0))
+        
+        select_btn = ttk.Button(button_frame, text="Select", command=on_select)
+        select_btn.pack(side=tk.LEFT, padx=5)
+        
+        cancel_btn = ttk.Button(button_frame, text="Cancel", command=on_cancel)
+        cancel_btn.pack(side=tk.LEFT, padx=5)
+        
+        # Configure grid weights
+        root.columnconfigure(0, weight=1)
+        root.rowconfigure(0, weight=1)
+        frame.columnconfigure(0, weight=1)
+        frame.rowconfigure(1, weight=1)
+        
+        root.mainloop()
+        
+        return selected_file[0]
     
     def load_data(self, filename):
         """Load and parse CSV log file"""
@@ -155,29 +235,63 @@ class LogViewer:
         
         # Plot 8: 2D Path Visualization
         ax = self.axes[3, 1]
+        
+        # Draw arena boundaries (30x30 feet)
+        arena_width = 30
+        arena_height = 30
+        ax.plot([0, arena_width, arena_width, 0, 0], 
+                [0, 0, arena_height, arena_height, 0], 
+                'k-', linewidth=2, label='Arena', zorder=1)
+        
+        # Mark bucket locations
+        buckets = {
+            'Red': (0, 0),
+            'Yellow': (0, 30),
+            'Blue': (30, 30),
+            'Green': (30, 0)
+        }
+        bucket_colors = {
+            'Red': 'red',
+            'Yellow': 'gold',
+            'Blue': 'blue',
+            'Green': 'green'
+        }
+        
+        for name, (x, y) in buckets.items():
+            ax.plot(x, y, 'o', color=bucket_colors[name], markersize=12, 
+                   markeredgecolor='black', markeredgewidth=1.5, 
+                   label=name, zorder=3)
+        
+        # Mark center
+        ax.plot(15, 15, 'x', color='purple', markersize=10, 
+               markeredgewidth=2, label='Center', zorder=3)
+        
         # Color code path by navigation state
         for state, color in state_colors.items():
             mask = self.data['nav_state'] == state
             if mask.any():
                 ax.plot(self.data.loc[mask, 'odom_x'], 
                        self.data.loc[mask, 'odom_y'], 
-                       'o', color=color, markersize=2, label=state, alpha=0.6)
+                       'o', color=color, markersize=2, label=state, alpha=0.6, zorder=2)
         
         # Add start and end markers
         ax.plot(self.data['odom_x'].iloc[0], self.data['odom_y'].iloc[0], 
-               'go', markersize=10, label='Start', markeredgecolor='black', markeredgewidth=1.5)
+               'go', markersize=10, label='Start', markeredgecolor='black', 
+               markeredgewidth=1.5, zorder=4)
         ax.plot(self.data['odom_x'].iloc[-1], self.data['odom_y'].iloc[-1], 
-               'rs', markersize=10, label='End', markeredgecolor='black', markeredgewidth=1.5)
+               'rs', markersize=10, label='End', markeredgecolor='black', 
+               markeredgewidth=1.5, zorder=4)
         
         ax.set_xlabel('X Position (feet)')
         ax.set_ylabel('Y Position (feet)')
-        ax.set_title('Robot Path (Top-Down View)')
-        ax.legend(loc='upper right', fontsize=8)
+        ax.set_title('Robot Path (Top-Down View - 30x30 Arena)')
+        ax.legend(loc='center left', bbox_to_anchor=(1, 0.5), fontsize=8, ncol=1)
         ax.grid(True, alpha=0.3)
-        ax.axis('equal') # Keep proportional aspect ratio
-        ax.margins(0.1)  # Add padding around path
-        # Note: autoscale with tight=True conflicts with axis('equal') sometimes, 
-        # so we rely on axis('equal') + margins
+        
+        # Set fixed arena limits
+        ax.set_xlim(-2, 32)
+        ax.set_ylim(-2, 32)
+        ax.set_aspect('equal')  # Keep square aspect ratio
 
         
         # Adjust layout

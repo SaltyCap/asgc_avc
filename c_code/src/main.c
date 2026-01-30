@@ -14,11 +14,7 @@
 
 volatile int running = 1;
 
-#define START_X 0.0
-#define START_Y 15.0
-#define START_HEADING 90.0
-
-OdometryState odometry = {START_X, START_Y, START_HEADING, 0, 0}; // Start at (0, 15), Heading 90
+OdometryState odometry = {START_X, START_Y, START_HEADING, 0, 0}; // Start at (0, 15), Heading from config
 NavigationController nav_ctrl = {NAV_IDLE, 0, 0, 0, 0, 0.3}; // Default 30% speed
 KalmanFilter kf_heading;
 double current_gyro_rate = 0.0;
@@ -284,8 +280,7 @@ void* coordinated_control_thread(void* arg) {
 
                     // Reset Encoders for local move
                     pthread_mutex_lock(&motors[0].lock);
-                    encoders[0].start_raw_angle = encoders[0].current_raw_angle;
-                    encoders[0].total_counts = 0;
+                    encoders[0].move_start_counts = encoders[0].total_counts; // Capture start position
                     encoders[0].target_counts = calculate_turn_counts(heading_diff);
                     encoders[0].has_target = 1;
                     encoders[0].stall_count = 0;
@@ -294,8 +289,7 @@ void* coordinated_control_thread(void* arg) {
                     pthread_mutex_unlock(&motors[0].lock);
 
                     pthread_mutex_lock(&motors[1].lock);
-                    encoders[1].start_raw_angle = encoders[1].current_raw_angle;
-                    encoders[1].total_counts = 0;
+                    encoders[1].move_start_counts = encoders[1].total_counts; // Capture start position
                     encoders[1].target_counts = -calculate_turn_counts(heading_diff); // Differential
                     encoders[1].has_target = 1;
                     encoders[1].stall_count = 0;
@@ -314,8 +308,10 @@ void* coordinated_control_thread(void* arg) {
                     // Reset Encoders for local move
                     int32_t counts = (int32_t)(distance * COUNTS_PER_FOOT);
                     pthread_mutex_lock(&motors[0].lock);
-                    encoders[0].start_raw_angle = encoders[0].current_raw_angle;
-                    encoders[0].total_counts = 0;
+// encoders[0].start_raw_angle = encoders[0].current_raw_angle; // REMOVED
+                    // encoders[0].rotation_count = 0; // REMOVED
+                    // encoders[0].total_counts = 0; // REMOVED
+                    encoders[0].move_start_counts = encoders[0].total_counts;
                     encoders[0].target_counts = counts;
                     encoders[0].has_target = 1;
                     encoders[0].stall_count = 0;
@@ -324,8 +320,10 @@ void* coordinated_control_thread(void* arg) {
                     pthread_mutex_unlock(&motors[0].lock);
 
                     pthread_mutex_lock(&motors[1].lock);
-                    encoders[1].start_raw_angle = encoders[1].current_raw_angle;
-                    encoders[1].total_counts = 0;
+// encoders[1].start_raw_angle = encoders[1].current_raw_angle; // REMOVED
+                    // encoders[1].rotation_count = 0; // REMOVED
+                    // encoders[1].total_counts = 0; // REMOVED
+                    encoders[1].move_start_counts = encoders[1].total_counts;
                     encoders[1].target_counts = counts;
                     encoders[1].has_target = 1;
                     encoders[1].stall_count = 0;
@@ -353,8 +351,9 @@ void* coordinated_control_thread(void* arg) {
                 // Check Left
                  pthread_mutex_lock(&motors[0].lock);
                  if (encoders[0].has_target) {
-                    int32_t current = encoders[0].total_counts + (encoders[0].current_raw_angle - encoders[0].start_raw_angle);
-                    int32_t error = encoders[0].target_counts - current;
+                     // Calculate relative position and error
+                    int32_t current_relative = (encoders[0].total_counts + (encoders[0].current_raw_angle - encoders[0].start_raw_angle)) - encoders[0].move_start_counts;
+                    int32_t error = encoders[0].target_counts - current_relative;
 
                     if (abs(error) < STOP_THRESHOLD) {
                         // Within stop threshold - we're done
@@ -369,30 +368,28 @@ void* coordinated_control_thread(void* arg) {
                         left_done = 1;
                     } else {
                         // Stall detection
+                        double current_time = get_time_sec();
+                        
                         if (current_time - encoders[0].stall_check_time > 0.5) {
-                            int32_t position_change = abs(current - encoders[0].stall_last_position);
+                            // Using current_relative for stall check is fine as it moves same as absolute
+                            int32_t position_change = abs(current_relative - encoders[0].stall_last_position);
                             if (position_change < 20 && abs(error) > 100) {
                                 encoders[0].stall_count++;
                                 fprintf(stderr, "Left motor stalled (count: %d), error: %d\n", encoders[0].stall_count, error);
                             } else {
                                 encoders[0].stall_count = 0;
                             }
-                            encoders[0].stall_last_position = current;
+                            encoders[0].stall_last_position = current_relative;
                             encoders[0].stall_check_time = current_time;
                         }
 
-                        // Proportional control with slowdown zone of 2000 counts
+                        // Simple Bang-Bang Control (No PID/Proportional)
                         int pwm;
-                        if (abs(error) < 2000) {
-                            double scale = (double)abs(error) / 2000.0;
-                            if (scale < 0.2) scale = 0.2; // Min 20% speed to keep moving
-                            pwm = (int)(MAX_PWM * scale);
-                            if (error < 0) pwm = -pwm;
-                            
-                            // Ensure we overcome friction (min absolute PWM)
-                            if (abs(pwm) < g_min_pwm) pwm = (pwm > 0) ? g_min_pwm : -g_min_pwm;
+                        
+                        if (error > 0) {
+                            pwm = MAX_PWM;
                         } else {
-                            pwm = (error > 0) ? MAX_PWM : -MAX_PWM;
+                            pwm = -MAX_PWM;
                         }
 
                         // Stall compensation - boost power if stuck
@@ -416,8 +413,9 @@ void* coordinated_control_thread(void* arg) {
                  // Check Right
                  pthread_mutex_lock(&motors[1].lock);
                  if (encoders[1].has_target) {
-                    int32_t current = encoders[1].total_counts + (encoders[1].current_raw_angle - encoders[1].start_raw_angle);
-                    int32_t error = encoders[1].target_counts - current;
+                    // Calculate relative position and error
+                    int32_t current_relative = (encoders[1].total_counts + (encoders[1].current_raw_angle - encoders[1].start_raw_angle)) - encoders[1].move_start_counts;
+                    int32_t error = encoders[1].target_counts - current_relative;
 
                     if (abs(error) < STOP_THRESHOLD) {
                         // Within stop threshold - we're done
@@ -432,30 +430,26 @@ void* coordinated_control_thread(void* arg) {
                         right_done = 1;
                     } else {
                         // Stall detection
+                        double current_time = get_time_sec(); 
                         if (current_time - encoders[1].stall_check_time > 0.5) {
-                            int32_t position_change = abs(current - encoders[1].stall_last_position);
+                            int32_t position_change = abs(current_relative - encoders[1].stall_last_position);
                             if (position_change < 20 && abs(error) > 100) {
                                 encoders[1].stall_count++;
                                 fprintf(stderr, "Right motor stalled (count: %d), error: %d\n", encoders[1].stall_count, error);
                             } else {
                                 encoders[1].stall_count = 0;
                             }
-                            encoders[1].stall_last_position = current;
+                            encoders[1].stall_last_position = current_relative;
                             encoders[1].stall_check_time = current_time;
                         }
 
-                        // Proportional control with slowdown zone of 2000 counts
+                         // Simple Bang-Bang Control (No PID/Proportional)
                         int pwm;
-                        if (abs(error) < 2000) {
-                            double scale = (double)abs(error) / 2000.0;
-                            if (scale < 0.2) scale = 0.2; // Min 20% speed to keep moving
-                            pwm = (int)(MAX_PWM * scale);
-                            if (error < 0) pwm = -pwm;
-                            
-                            // Ensure we overcome friction (min absolute PWM)
-                            if (abs(pwm) < g_min_pwm) pwm = (pwm > 0) ? g_min_pwm : -g_min_pwm;
+                        
+                        if (error > 0) {
+                            pwm = MAX_PWM;
                         } else {
-                            pwm = (error > 0) ? MAX_PWM : -MAX_PWM;
+                            pwm = -MAX_PWM;
                         }
 
                         // Stall compensation - boost power if stuck
@@ -502,16 +496,58 @@ void* coordinated_control_thread(void* arg) {
 }
 
 // --- Encoder feedback thread ---
-void update_encoder_tracker(EncoderState *enc, int16_t raw_angle) {
-    if (enc->last_raw_angle >= 0) {
-        if (enc->last_raw_angle > 3500 && raw_angle < 500) {
-            enc->total_counts += COUNTS_PER_REV;
-        } else if (enc->last_raw_angle < 500 && raw_angle > 3500) {
-            enc->total_counts -= COUNTS_PER_REV;
+// Helper function to get motor state from PWM pulse width
+int8_t get_motor_state(int pwm_ns) {
+    if (pwm_ns > NEUTRAL_NS + 10000) return 1;   // Forward (>1510µs, 10µs hysteresis)
+    if (pwm_ns < NEUTRAL_NS - 10000) return -1;  // Reverse (<1490µs, 10µs hysteresis)
+    return 0;  // Neutral
+}
+
+// Helper function to calculate current position based on rotation count and raw angle
+int32_t calculate_position(EncoderState *enc) {
+    // Formula: 4095 * rotation_count ± current_value
+    // For forward: add current angle
+    // For reverse: subtract current angle (rotations already negative)
+    int32_t base = COUNTS_PER_REV * enc->rotation_count;
+    int32_t offset = enc->current_raw_angle - enc->start_raw_angle;
+    
+    return base + offset;
+}
+
+void update_encoder_rotation(EncoderState *enc, int16_t raw_angle, int motor_id) {
+    // Update motor state from PWM
+    int pwm_ns = motors[motor_id].last_pulse_ns;
+    enc->motor_state = get_motor_state(pwm_ns);
+    
+    // Initialize on first valid read
+    if (enc->last_raw_angle < 0) {
+        enc->last_raw_angle = raw_angle;
+        enc->current_raw_angle = raw_angle;
+        enc->last_motor_state = enc->motor_state;
+        return;
+    }
+    
+    // Detect rotation completion by monitoring boundary crossings
+    // Both motors use the same logic (encoders are not inverted)
+    if (enc->motor_state == 1) {
+        // Forward motion: crossing from high (>3000) to low (<1000)
+        if (enc->last_raw_angle > 3000 && raw_angle < 1000) {
+            enc->rotation_count++;
+        }
+    } else if (enc->motor_state == -1) {
+        // Reverse motion: crossing from low (<1000) to high (>3000)
+        if (enc->last_raw_angle < 1000 && raw_angle > 3000) {
+            enc->rotation_count--;
         }
     }
+    
+    // Update state
     enc->last_raw_angle = raw_angle;
     enc->current_raw_angle = raw_angle;
+    enc->last_motor_state = enc->motor_state;
+    
+    // Update total_counts for compatibility (will be phased out)
+    enc->total_counts = calculate_position(enc);
 }
 
 void* encoder_feedback_thread(void* arg) {
@@ -537,28 +573,14 @@ void* encoder_feedback_thread(void* arg) {
         // Process left motor encoder
         if (left_angle >= 0) {
             pthread_mutex_lock(&motors[0].lock);
-            
-            // Safety: Initialize last_raw_angle on first valid read
-            if (encoders[0].last_raw_angle < 0) {
-                encoders[0].last_raw_angle = left_angle;
-                encoders[0].current_raw_angle = left_angle;
-            }
-            
-            update_encoder_tracker(&encoders[0], left_angle);
+            update_encoder_rotation(&encoders[0], left_angle, 0);
             pthread_mutex_unlock(&motors[0].lock);
         }
 
         // Process right motor encoder
         if (right_angle >= 0) {
             pthread_mutex_lock(&motors[1].lock);
-
-            // Safety: Initialize last_raw_angle on first valid read
-            if (encoders[1].last_raw_angle < 0) {
-                encoders[1].last_raw_angle = right_angle;
-                encoders[1].current_raw_angle = right_angle;
-            }
-
-            update_encoder_tracker(&encoders[1], right_angle);
+            update_encoder_rotation(&encoders[1], right_angle, 1);
             pthread_mutex_unlock(&motors[1].lock);
         }
 
@@ -575,9 +597,19 @@ int32_t calculate_turn_counts(double degrees) {
 
 // --- Fusion Odometry ---
 void update_odometry(void) {
+    static int first_update = 1;
+    
     double current_time = get_time_sec();
     double dt = current_time - last_imu_time;
     last_imu_time = current_time;
+
+    // Initialize odometry tracking on first update to prevent position jump
+    if (first_update) {
+        odometry.last_left_total = encoders[0].total_counts;
+        odometry.last_right_total = encoders[1].total_counts;
+        first_update = 0;
+        return;  // Skip first update to avoid spurious delta
+    }
 
     // 1. Get Encoder Data (Distance Change)
     // Delta counts since last check (Note: assumes we are called frequently enough that we don't wrap int32)
@@ -601,10 +633,22 @@ void update_odometry(void) {
     double gyro_rate = current_gyro_rate;
     pthread_mutex_unlock(&imu_data_lock);
 
-    // 4. IMU Integration (No Sensor Fusion)
-    // Simply integrate gyro rate to get new heading
+    // Apply gyro deadband to prevent drift when stationary
+    // Ignore gyro readings less than 0.5 deg/sec
+    if (fabs(gyro_rate) < 0.25) {
+        gyro_rate = 0.0;
+    }
+
+    // 4. IMU Integration
+    // Only integrate gyro if robot is actually moving (encoders changing)
+    // This prevents heading drift when stationary
     double dt_seconds = dt;
-    double delta_heading = gyro_rate * dt_seconds;
+    double delta_heading = 0.0;
+    
+    // Check if robot is moving (either wheel has moved)
+    if (fabs(center_dist) > 0.001) {  // More than 0.001 feet movement
+        delta_heading = gyro_rate * dt_seconds;
+    }
     
     // Update heading
     double new_heading = odometry.heading + delta_heading;
@@ -796,7 +840,7 @@ int main(void) {
     if (imu_init() < 0) {
         fprintf(stderr, "WARNING: IMU init failed (check wiring to I2C3). Continuing without IMU.\n");
     } else {
-        imu_calibrate(200); // 1 second calibration
+        imu_calibrate(500); // 2.5 second calibration for better accuracy
     }
 
     // Initialize Kalman Filter
@@ -810,6 +854,12 @@ int main(void) {
         encoders[i].current_raw_angle = 0;
         encoders[i].last_raw_angle = -1; // Flag as invalid
         encoders[i].start_raw_angle = 0;
+        
+        // Rotation-based tracking fields
+        encoders[i].rotation_count = 0;
+        encoders[i].motor_state = 0;
+        encoders[i].last_motor_state = 0;
+        
         encoders[i].target_counts = 0;
         encoders[i].has_target = 0;
         encoders[i].stall_last_position = 0;

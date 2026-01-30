@@ -21,7 +21,7 @@ CENTER = (15, 15)
 
 # Starting position
 START_POSITION = (0, 15)
-START_HEADING = 90
+START_HEADING = 0  # Car points in +X direction (East)
 
 def get_bucket_position(color):
     """Get position of bucket by color name."""
