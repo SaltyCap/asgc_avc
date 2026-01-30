@@ -346,7 +346,9 @@ void* coordinated_control_thread(void* arg) {
 
                 // Simple on/off control - no proportional deceleration
                 // Use global PWM limits (can be adjusted via setpwm command)
-                int MAX_PWM = g_max_pwm;
+                // Apply speed multiplier from slider (0.0 - 1.0)
+                int MAX_PWM = (int)(g_max_pwm * nav_ctrl.speed_multiplier);
+                if (MAX_PWM < g_min_pwm) MAX_PWM = g_min_pwm; // Ensure we can move
 
                 // Check Left
                  pthread_mutex_lock(&motors[0].lock);
@@ -379,8 +381,19 @@ void* coordinated_control_thread(void* arg) {
                             encoders[0].stall_check_time = current_time;
                         }
 
-                        // Simple on/off control: run at constant speed until close to target
-                        int pwm = (error > 0) ? MAX_PWM : -MAX_PWM;
+                        // Proportional control with slowdown zone of 2000 counts
+                        int pwm;
+                        if (abs(error) < 2000) {
+                            double scale = (double)abs(error) / 2000.0;
+                            if (scale < 0.2) scale = 0.2; // Min 20% speed to keep moving
+                            pwm = (int)(MAX_PWM * scale);
+                            if (error < 0) pwm = -pwm;
+                            
+                            // Ensure we overcome friction (min absolute PWM)
+                            if (abs(pwm) < g_min_pwm) pwm = (pwm > 0) ? g_min_pwm : -g_min_pwm;
+                        } else {
+                            pwm = (error > 0) ? MAX_PWM : -MAX_PWM;
+                        }
 
                         // Stall compensation - boost power if stuck
                         int boost = encoders[0].stall_count * 10;
@@ -431,8 +444,19 @@ void* coordinated_control_thread(void* arg) {
                             encoders[1].stall_check_time = current_time;
                         }
 
-                        // Simple on/off control: run at constant speed until close to target
-                        int pwm = (error > 0) ? MAX_PWM : -MAX_PWM;
+                        // Proportional control with slowdown zone of 2000 counts
+                        int pwm;
+                        if (abs(error) < 2000) {
+                            double scale = (double)abs(error) / 2000.0;
+                            if (scale < 0.2) scale = 0.2; // Min 20% speed to keep moving
+                            pwm = (int)(MAX_PWM * scale);
+                            if (error < 0) pwm = -pwm;
+                            
+                            // Ensure we overcome friction (min absolute PWM)
+                            if (abs(pwm) < g_min_pwm) pwm = (pwm > 0) ? g_min_pwm : -g_min_pwm;
+                        } else {
+                            pwm = (error > 0) ? MAX_PWM : -MAX_PWM;
+                        }
 
                         // Stall compensation - boost power if stuck
                         int boost = encoders[1].stall_count * 10;
@@ -528,16 +552,13 @@ void* encoder_feedback_thread(void* arg) {
         if (right_angle >= 0) {
             pthread_mutex_lock(&motors[1].lock);
 
-            // Invert Right Encoder (to match Motor direction)
-            int16_t inverted_angle = 4095 - right_angle;
-            
             // Safety: Initialize last_raw_angle on first valid read
             if (encoders[1].last_raw_angle < 0) {
-                encoders[1].last_raw_angle = inverted_angle;
-                encoders[1].current_raw_angle = inverted_angle;
+                encoders[1].last_raw_angle = right_angle;
+                encoders[1].current_raw_angle = right_angle;
             }
 
-            update_encoder_tracker(&encoders[1], inverted_angle);
+            update_encoder_tracker(&encoders[1], right_angle);
             pthread_mutex_unlock(&motors[1].lock);
         }
 
@@ -571,45 +592,39 @@ void update_odometry(void) {
 
     double center_dist = (dist_left + dist_right) / 2.0;
 
-    // 2. Get Encoder Heading Change (Measurement)
-    double d_heading_enc = (dist_right - dist_left) / (WHEELBASE_INCHES / 12.0); // Radians
-    double d_heading_enc_deg = d_heading_enc * (180.0/M_PI);
+
     
-    // Calculate "measured" heading based on previous fused heading + encoder change
-    // This effectively treats the encoder as a "measurement" of the NEW angle
-    double measured_angle = kf_heading.angle + d_heading_enc_deg;
+
 
     // 3. Get Gyro Rate (Process)
     pthread_mutex_lock(&imu_data_lock);
     double gyro_rate = current_gyro_rate;
     pthread_mutex_unlock(&imu_data_lock);
 
-    // 4. Run Kalman Filter
-    // Predict: Angle += Gyro * dt
-    // Update: Correct with Measured Angle
-    // Note: We use negative gyro rate because Z-axis Up = CCW Positive, but our coordinates might be different.
-    // Standard Right Hand Rule: Z Up -> CCW is Positive.
-    // If robot turns Left (CCW), Gyro is Positive. Heading increases.
-    // Check signs: d_heading_enc_deg is positive for Left turn.
+    // 4. IMU Integration (No Sensor Fusion)
+    // Simply integrate gyro rate to get new heading
+    double dt_seconds = dt;
+    double delta_heading = gyro_rate * dt_seconds;
     
-    double fused_angle = kalman_get_angle(&kf_heading, measured_angle, gyro_rate, dt);
+    // Update heading
+    double new_heading = odometry.heading + delta_heading;
 
-    // 5. Update Odometry State with Fused Heading
+    // 5. Update Odometry State
     // Use the average heading during the interval for position update
-    double avg_heading_rad = (odometry.heading + fused_angle) / 2.0 * (M_PI/180.0);
+    double avg_heading_rad = (odometry.heading + new_heading) / 2.0 * (M_PI/180.0);
     
     odometry.x += center_dist * cos(avg_heading_rad);
     odometry.y += center_dist * sin(avg_heading_rad);
     
-    odometry.heading = fused_angle;
+    odometry.heading = new_heading;
     
     // Normalize heading 0-360
     while(odometry.heading >= 360.0) odometry.heading -= 360.0;
     while(odometry.heading < 0.0) odometry.heading += 360.0;
     
-    // Keep Kalman state normalized too to prevent winding
-     while(kf_heading.angle >= 360.0) kf_heading.angle -= 360.0;
-     while(kf_heading.angle < 0.0) kf_heading.angle += 360.0;
+    // Update Kalman state just to keep it in sync if we switch back later, 
+    // though it's not used for the result anymore
+    kf_heading.angle = odometry.heading;
 }
 
 // --- Command processing ---
@@ -728,20 +743,20 @@ void process_command(char* cmd) {
 
 
 
-            // Write pulse widths directly
+            // Write pulse widths directly (Protected by locks)
+            pthread_mutex_lock(&motors[0].lock);
             lseek(motors[0].pwm_duty_fd, 0, SEEK_SET);
             dprintf(motors[0].pwm_duty_fd, "%d", left_ns);
-            lseek(motors[1].pwm_duty_fd, 0, SEEK_SET);
-            dprintf(motors[1].pwm_duty_fd, "%d", right_ns);
-
-            // Update state for logging
-            pthread_mutex_lock(&motors[0].lock);
             motors[0].last_pulse_ns = left_ns;
             pthread_mutex_unlock(&motors[0].lock);
 
             pthread_mutex_lock(&motors[1].lock);
+            lseek(motors[1].pwm_duty_fd, 0, SEEK_SET);
+            dprintf(motors[1].pwm_duty_fd, "%d", right_ns);
             motors[1].last_pulse_ns = right_ns;
             pthread_mutex_unlock(&motors[1].lock);
+
+
 
             printf("OK pulse L:%d R:%d\n", left_ns, right_ns);
             fflush(stdout);

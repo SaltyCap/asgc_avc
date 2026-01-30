@@ -11,8 +11,8 @@
 
 // Constants
 #define COUNTS_PER_REV 4096
-#define STOP_THRESHOLD 50          // Stop when within 50 counts (~0.5 inches)
-#define DEADBAND_THRESHOLD 50      // Don't reverse if within 50 counts (~0.5 inches)
+#define STOP_THRESHOLD 200          // Stop when within 200 counts (~0.8 inches)
+#define DEADBAND_THRESHOLD 200      // Don't reverse if within 200 counts (~0.8 inches)
 
 // Robot Physical Constants (from course_config.py)
 #define WHEEL_DIAMETER_INCHES 5.3
