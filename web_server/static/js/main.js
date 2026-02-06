@@ -320,6 +320,10 @@ function resetPosition() {
     sendQueueCommand('reset position');
 }
 
+function calibrateRobot() {
+    sendQueueCommand('calibrate');
+}
+
 function updatePwmLimitDisplay() {
     if (!pwmLimitSlider) return; // Guard against missing element
 
@@ -378,7 +382,13 @@ function sendPwmSettings(minPwm, maxPwm) {
             max_pwm: maxPwm
         }));
 
-        console.log(`Power Limit: ${pwmLimit}% (PWM: Min=${minPwm}%, Max=${maxPwm}%)`);
+        // Also send speed percent for navigation (0.0 to 1.0)
+        motorWs.send(JSON.stringify({
+            type: 'set_speed',
+            speed_percent: pwmLimit
+        }));
+
+        console.log(`Power Limit: ${pwmLimit}% (PWM: Min=${minPwm}%, Max=${maxPwm}%, Speed: ${pwmLimit}%)`);
     }
 }
 
@@ -476,9 +486,50 @@ document.addEventListener('DOMContentLoaded', () => {
     clearQueueBtn.addEventListener('click', clearQueue);
     resetPosBtn.addEventListener('click', resetPosition);
 
+    // Calibrate button initialization
+    const calibrateButton = document.getElementById('calibrateButton');
+    if (calibrateButton) {
+        calibrateButton.addEventListener('click', () => {
+            if (confirm('Calibrate gyro and reset to start position (0, 15)? Robot must be stationary!')) {
+                calibrateRobot();
+            }
+        });
+    }
+
     // Power limit slider initialization
     if (pwmLimitSlider) {
         pwmLimitSlider.addEventListener('input', updatePwmLimitDisplay);
+    }
+
+    // Shutdown button initialization
+    const shutdownButton = document.getElementById('shutdownButton');
+    if (shutdownButton) {
+        shutdownButton.addEventListener('click', () => {
+            if (confirm('Are you sure you want to shutdown the system? This will save logs and stop the program.')) {
+                shutdownButton.disabled = true;
+                shutdownButton.textContent = '⏳ Shutting down...';
+
+                fetch('/api/shutdown', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json'
+                    }
+                })
+                    .then(response => response.json())
+                    .then(data => {
+                        console.log('Shutdown initiated:', data);
+                        // Show shutdown message
+                        if (transcriptEl) {
+                            transcriptEl.innerHTML = '<strong>System shutting down...</strong><br>Logs saved. You can close this window.';
+                        }
+                    })
+                    .catch(error => {
+                        console.error('Shutdown error:', error);
+                        shutdownButton.disabled = false;
+                        shutdownButton.textContent = '🔌 Shutdown';
+                    });
+            }
+        });
     }
 
     connectMotorWebSocket();

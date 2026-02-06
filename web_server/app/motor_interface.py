@@ -116,6 +116,12 @@ class MotorInterface:
 
     def _handle_motor_feedback(self, line):
         """Parses motor feedback and updates navigation controller."""
+        # Check for READY message and send initial speed setting
+        if line.startswith("READY"):
+            # Send initial speed to match web interface slider default (25%)
+            self.send_command("speed 0.25")
+            print("[MOTOR] Initialized speed to 25% (matching slider default)")
+        
         if not self.nav_controller:
             return
 

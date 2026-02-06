@@ -6,7 +6,7 @@ SRC_DIR = src
 OBJ_DIR = obj
 BIN_DIR = .
 
-SRCS = $(SRC_DIR)/main.c $(SRC_DIR)/motor.c $(SRC_DIR)/i2c.c $(SRC_DIR)/common.c $(SRC_DIR)/imu.c $(SRC_DIR)/kalman.c $(SRC_DIR)/sensors.c
+SRCS = $(SRC_DIR)/main.c $(SRC_DIR)/motor.c $(SRC_DIR)/i2c.c $(SRC_DIR)/common.c $(SRC_DIR)/imu.c $(SRC_DIR)/kalman.c $(SRC_DIR)/sensors.c $(SRC_DIR)/logging.c
 OBJS = $(patsubst src/%.c,obj/%.o,$(SRCS))
 TARGET = asgc_motor_control
 

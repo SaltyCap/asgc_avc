@@ -74,7 +74,7 @@ class Config:
         "forward", "back", "backward", "reverse", 
         "left", "right", 
         "motor", "one", "two", 
-        "start", "reset", "position", 
+        "start", "reset", "position", "calibrate",
         "[unk]"
     ]
     
@@ -91,4 +91,4 @@ class Config:
     }
 
     # Immediate action commands (not queued)
-    IMMEDIATE_COMMANDS = {'clear', 'stop', 'reset', 'start'}
+    IMMEDIATE_COMMANDS = {'clear', 'stop', 'reset', 'start', 'calibrate'}

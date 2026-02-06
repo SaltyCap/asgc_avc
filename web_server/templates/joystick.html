@@ -191,6 +191,15 @@
             background: rgba(239, 68, 68, 0.7);
         }
 
+        .control-button.shutdown-btn {
+            background: rgba(249, 115, 22, 0.5);
+            border-color: rgba(249, 115, 22, 0.8);
+        }
+
+        .control-button.shutdown-btn:hover {
+            background: rgba(249, 115, 22, 0.7);
+        }
+
         .motor-speeds {
             display: flex;
             justify-content: center;
@@ -367,6 +376,7 @@
 
         <div class="control-buttons">
             <button class="control-button stop-btn" onclick="emergencyStop()">🛑 STOP</button>
+            <button class="control-button shutdown-btn" onclick="shutdownSystem()">🔌 Shutdown</button>
         </div>
     </div>
 
@@ -522,6 +532,31 @@
                 motorWs.send(JSON.stringify({ type: 'stop' }));
             }
             resetJoystick();
+        }
+
+        function shutdownSystem() {
+            if (confirm('Are you sure you want to shutdown the system? This will save logs and stop the program.')) {
+                // Stop motors first
+                emergencyStop();
+
+                // Call shutdown API
+                fetch('/api/shutdown', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json'
+                    }
+                })
+                    .then(response => response.json())
+                    .then(data => {
+                        console.log('Shutdown initiated:', data);
+                        // Update UI to show shutdown
+                        document.body.innerHTML = '<div style="display: flex; justify-content: center; align-items: center; height: 100vh; flex-direction: column; gap: 20px;"><h1>🔌 System Shutting Down</h1><p>Logs saved. You can close this window.</p></div>';
+                    })
+                    .catch(error => {
+                        console.error('Shutdown error:', error);
+                        alert('Error initiating shutdown. Please try again.');
+                    });
+            }
         }
 
         function updateCenter() {

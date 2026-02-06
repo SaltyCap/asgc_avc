@@ -138,8 +138,8 @@ def motor_socket(ws):
                         speed_percent = data.get('speed_percent', 100)
                         speed_percent = max(0, min(100, int(speed_percent)))
                         if motor_interface.nav_controller:
-                            motor_interface.nav_controller.set_speed_multiplier(speed_percent / 100.0)
-                        print(f"Speed multiplier set to: {speed_percent}%")
+                            motor_interface.nav_controller.set_speed_percent(speed_percent / 100.0)
+                        print(f"Speed set to: {speed_percent}%")
                         ws.send(json.dumps({'type': 'speed_set', 'speed_percent': speed_percent}))
                         continue
 

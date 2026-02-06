@@ -22,8 +22,7 @@ typedef struct {
     int pwm_duty_fd;
     int pwm_enable_fd;
     int current_speed;
-    int last_pulse_ns;           // For ramp rate limiting (in nanoseconds)
-    double last_speed_update_time;  // For ramp rate limiting
+    int last_pulse_ns;           // Last PWM pulse width sent (for logging)
     pthread_mutex_t lock;
 } Motor;
 
@@ -41,11 +40,9 @@ typedef struct {
     int32_t target_counts;     // Target relative distance
     int32_t move_start_counts; // Total counts at start of current move (for relative tracking)
     int has_target;            // Flag
-
-    // Stall detection
-    int32_t stall_last_position; // Position at last stall check
-    double stall_check_time;     // Time of last stall check
-    int stall_count;             // Number of consecutive stalls
+    
+    // Smooth ramping
+    double ramp_start_time;      // Time when ramping started (0.0 = not started)
 } EncoderState;
 
 // Global arrays

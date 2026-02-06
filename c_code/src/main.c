@@ -4,6 +4,7 @@
 #include "../include/imu.h"
 #include "../include/kalman.h"
 #include "../include/sensors.h"
+#include "../include/logging.h"
 #include <stdio.h>
 #include <stdlib.h>
 #include <unistd.h>
@@ -12,237 +13,67 @@
 #include <pthread.h>
 #include <math.h>
 
+// Global state
 volatile int running = 1;
 
-OdometryState odometry = {START_X, START_Y, START_HEADING, 0, 0}; // Start at (0, 15), Heading from config
-NavigationController nav_ctrl = {NAV_IDLE, 0, 0, 0, 0, 0.3}; // Default 30% speed
+// Odometry and navigation state
+OdometryState odometry = {START_X, START_Y, START_HEADING, 0, 0};
+NavigationController nav_ctrl = {NAV_IDLE, 0, 0, 0, 0, 0.15, 0, 0, 0};
+
+// IMU and Kalman filter state
 KalmanFilter kf_heading;
 double current_gyro_rate = 0.0;
 double last_imu_time = 0.0;
 pthread_mutex_t imu_data_lock = PTHREAD_MUTEX_INITIALIZER;
 
-// Global PWM control parameters (can be adjusted via setpwm command)
-int g_min_pwm = 45;  // Minimum PWM to overcome friction
-int g_max_pwm = 80;  // Maximum PWM for control stability
+// Global PWM limits from slider (nanoseconds)
+// These values are set by the web interface and control max motor speed
+int g_min_pwm_ns = 1400000;  // Minimum PWM pulse width (1400µs)
+int g_max_pwm_ns = 1600000;  // Maximum PWM pulse width (1600µs)
 
-void dump_log(); // Forward declare
+// Motor ramping time constants
+// Using smooth ramps prevents mechanical stress and improves control stability
+#define RAMP_UP_TIME 3.0    // Seconds to ramp from neutral to max speed
+#define RAMP_DOWN_TIME 3.0  // Seconds to ramp from max to neutral
+#define DECEL_ZONE_FEET 3.0 // Start decelerating when within 3 feet of target
+#define DECEL_ZONE_COUNTS ((int32_t)(DECEL_ZONE_FEET * COUNTS_PER_FOOT))
+
+// Forward declarations
 int32_t calculate_turn_counts(double degrees);
 void update_odometry(void);
 
 
+/**
+ * Signal handler for graceful shutdown
+ * 
+ * Handles SIGINT (Ctrl+C) and SIGTERM by stopping the control loop
+ * and dumping telemetry logs before exit.
+ */
 void signal_handler(int sig) {
     (void)sig;
     running = 0;
     dump_log();
 }
 
-// --- Logging System ---
-// --- Logging System ---
-#define LOG_SIZE 1000000 // ~48MB RAM for logs, ~1.4 hrs at 200Hz. Reduced from 15M to prevent OOM.
-
-// Control modes for logging
-typedef enum {
-    MODE_IDLE = 0,
-    MODE_JOYSTICK = 1,    // Direct pulse commands
-    MODE_VOICE_NAV = 2    // Autonomous goto commands
-} ControlMode;
-
-typedef struct {
-    double time;
-    int32_t target_l;
-    int32_t actual_l;
-    int pulse_l; 
-    int raw_l;
-    int32_t target_r;
-    int32_t actual_r;
-    int pulse_r; 
-    int raw_r;
-    char mode; // Control mode: 0=IDLE, 1=JOYSTICK, 2=VOICE_NAV
-    
-    // IMU data
-    double gyro_z;        // Z-axis gyro rate (degrees/sec)
-    
-    // Odometry data
-    double odom_x;        // X position (feet)
-    double odom_y;        // Y position (feet)
-    double odom_heading;  // Heading (degrees)
-    
-    // Navigation state
-    char nav_state;       // 0=IDLE, 1=PLANNING, 2=TURNING, 3=DRIVING
-} LogEntry;
-
-LogEntry *log_buffer = NULL;
-int log_index = 0;
-ControlMode current_mode = MODE_IDLE;
-
-void init_log_system() {
-    log_buffer = (LogEntry*)malloc(sizeof(LogEntry) * LOG_SIZE);
-    if (!log_buffer) {
-        printf("ERROR: Failed to allocate 500MB log buffer\n");
-    } else {
-        printf("Allocated log buffer (%d entries)\n", LOG_SIZE);
-    }
-}
-
-void log_data(double time) {
-    if (!log_buffer || log_index >= LOG_SIZE) return;
-
-    // Capture state safely
-    LogEntry *entry = &log_buffer[log_index];
-    entry->time = time;
-    entry->mode = (char)current_mode;
-
-    pthread_mutex_lock(&motors[0].lock);
-    entry->target_l = encoders[0].target_counts;
-    entry->actual_l = encoders[0].total_counts + (encoders[0].current_raw_angle - encoders[0].start_raw_angle);
-    entry->pulse_l = motors[0].last_pulse_ns;
-    entry->raw_l = encoders[0].current_raw_angle;
-    pthread_mutex_unlock(&motors[0].lock);
-
-    pthread_mutex_lock(&motors[1].lock);
-    entry->target_r = encoders[1].target_counts;
-    entry->actual_r = encoders[1].total_counts + (encoders[1].current_raw_angle - encoders[1].start_raw_angle);
-    entry->pulse_r = motors[1].last_pulse_ns;
-    entry->raw_r = encoders[1].current_raw_angle;
-    pthread_mutex_unlock(&motors[1].lock);
-
-    // Capture IMU data
-    pthread_mutex_lock(&imu_data_lock);
-    entry->gyro_z = current_gyro_rate;
-    pthread_mutex_unlock(&imu_data_lock);
-
-    // Capture odometry data (odometry is updated in coordinated_control_thread)
-    entry->odom_x = odometry.x;
-    entry->odom_y = odometry.y;
-    entry->odom_heading = odometry.heading;
-
-    // Capture navigation state
-    entry->nav_state = (char)nav_ctrl.state;
-
-    log_index++;
-}
-
-void dump_log() {
-    if (!log_buffer) return;
-
-    // Generate timestamp for unique filename
-    time_t now = time(NULL);
-    struct tm *t = localtime(&now);
-    char filename[512];
-    char temp_filename[512];
-
-    // Count entries by mode to determine primary mode
-    int joystick_count = 0;
-    int voice_count = 0;
-    for (int i = 0; i < log_index; i++) {
-        if (log_buffer[i].mode == MODE_JOYSTICK) joystick_count++;
-        else if (log_buffer[i].mode == MODE_VOICE_NAV) voice_count++;
-    }
-
-    // Determine primary mode and create appropriate filename
-    const char *mode_str = (joystick_count > voice_count) ? "joystick" : "voice";
-
-    // Permanent log directory (relative to project root)
-    // Check if file exists and auto-increment to prevent overwriting
-    int file_counter = 0;
-    while (1) {
-        if (file_counter == 0) {
-            snprintf(filename, sizeof(filename),
-                     "../logs/motor_log_%s_%04d%02d%02d_%02d%02d%02d.csv",
-                     mode_str, t->tm_year + 1900, t->tm_mon + 1, t->tm_mday,
-                     t->tm_hour, t->tm_min, t->tm_sec);
-        } else {
-            snprintf(filename, sizeof(filename),
-                     "../logs/motor_log_%s_%04d%02d%02d_%02d%02d%02d_%d.csv",
-                     mode_str, t->tm_year + 1900, t->tm_mon + 1, t->tm_mday,
-                     t->tm_hour, t->tm_min, t->tm_sec, file_counter);
-        }
-
-        // Check if file exists
-        FILE *test = fopen(filename, "r");
-        if (!test) {
-            // File doesn't exist, we can use this filename
-            break;
-        }
-        fclose(test);
-        file_counter++;
-
-        // Safety: don't loop forever
-        if (file_counter > 1000) {
-            fprintf(stderr, "ERROR: Too many log files with same timestamp\n");
-            return;
-        }
-    }
-
-    // Also save to RAM disk for quick access during session
-    snprintf(temp_filename, sizeof(temp_filename),
-             "/dev/shm/motor_log_%s_latest.csv", mode_str);
-
-    FILE *f = fopen(filename, "w");
-    if (!f) {
-        fprintf(stderr, "ERROR: Could not open log file %s\n", filename);
-        return;
-    }
-
-    // Header with all telemetry data
-    fprintf(f, "time,mode,pwm_l,i2c_l,pwm_r,i2c_r,target_l,actual_l,target_r,actual_r,gyro_z,odom_x,odom_y,odom_heading,nav_state\n");
-
-    // Write data with all telemetry fields
-    const char *mode_names[] = {"IDLE", "JOYSTICK", "VOICE"};
-    const char *nav_state_names[] = {"IDLE", "TURNING", "DRIVING", "GOTO"};
-    for (int i = 0; i < log_index; i++) {
-        fprintf(f, "%.4f,%s,%d,%d,%d,%d,%d,%d,%d,%d,%.4f,%.4f,%.4f,%.2f,%s\n",
-            log_buffer[i].time,
-            mode_names[(int)log_buffer[i].mode],
-            log_buffer[i].pulse_l, log_buffer[i].raw_l,
-            log_buffer[i].pulse_r, log_buffer[i].raw_r,
-            log_buffer[i].target_l, log_buffer[i].actual_l,
-            log_buffer[i].target_r, log_buffer[i].actual_r,
-            log_buffer[i].gyro_z,
-            log_buffer[i].odom_x,
-            log_buffer[i].odom_y,
-            log_buffer[i].odom_heading,
-            nav_state_names[(int)log_buffer[i].nav_state]);
-    }
-    fclose(f);
-    printf("Saved %d log entries to %s\n", log_index, filename);
-    printf("  Joystick entries: %d, Voice navigation entries: %d\n", joystick_count, voice_count);
-
-    // Also save a copy to RAM disk for quick access
-    FILE *f_temp = fopen(temp_filename, "w");
-    if (f_temp) {
-        fprintf(f_temp, "time,mode,pwm_l,i2c_l,pwm_r,i2c_r,target_l,actual_l,target_r,actual_r,gyro_z,odom_x,odom_y,odom_heading,nav_state\n");
-        const char *mode_names[] = {"IDLE", "JOYSTICK", "VOICE"};
-        const char *nav_state_names[] = {"IDLE", "TURNING", "DRIVING", "GOTO"};
-        for (int i = 0; i < log_index; i++) {
-            fprintf(f_temp, "%.4f,%s,%d,%d,%d,%d,%d,%d,%d,%d,%.4f,%.4f,%.4f,%.2f,%s\n",
-                log_buffer[i].time,
-                mode_names[(int)log_buffer[i].mode],
-                log_buffer[i].pulse_l, log_buffer[i].raw_l,
-                log_buffer[i].pulse_r, log_buffer[i].raw_r,
-                log_buffer[i].target_l, log_buffer[i].actual_l,
-                log_buffer[i].target_r, log_buffer[i].actual_r,
-                log_buffer[i].gyro_z,
-                log_buffer[i].odom_x,
-                log_buffer[i].odom_y,
-                log_buffer[i].odom_heading,
-                nav_state_names[(int)log_buffer[i].nav_state]);
-        }
-        fclose(f_temp);
-        printf("  Quick access copy: %s\n", temp_filename);
-    }
-
-    // Free buffer after dumping to save memory if we were to continue (though we exit usually)
-    free(log_buffer);
-    log_buffer = NULL;
-}
-
-// --- Coordinated Control Thread ---
+/**
+ * Coordinated control thread
+ * 
+ * Main control loop running at 500Hz. Handles navigation state machine,
+ * motor control with smooth ramping, and telemetry logging.
+ * 
+ * Navigation states:
+ * - NAV_IDLE: No active navigation
+ * - NAV_GOTO: Planning phase, determines if turn or drive is needed
+ * - NAV_TURNING: Executing differential turn to target heading
+ * - NAV_DRIVING: Executing straight-line drive to target position
+ * - NAV_BUCKET_ROTATE: Special bucket approach - rotate 180 degrees
+ * - NAV_BUCKET_BACKUP: Special bucket approach - back up to 0.25ft
+ */
 void* coordinated_control_thread(void* arg) {
     (void)arg;
-    int sleep_us = 1000000 / 200; // 200Hz control loop
+    const int sleep_us = 1000000 / 500; // 500Hz control loop
     
-    printf("Control loop running at 200Hz\n");
+    printf("Control loop running at 500Hz\n");
 
     while (running) {
         double current_time = get_time_sec();
@@ -266,14 +97,29 @@ void* coordinated_control_thread(void* arg) {
 
                 double distance = sqrt(dx*dx + dy*dy);
 
-                if (distance < 1.0) { // Tolerance 1ft
-                    printf("ARRIVED\n");
-                    fflush(stdout);
-                    nav_ctrl.state = NAV_IDLE;
+                // Use different tolerance based on whether this is a bucket target
+                double arrival_tolerance = nav_ctrl.is_bucket_target ? 1.5 : 1.0;
 
-                    // Send immediate STATUS update so Python knows we arrived
-                    printf("STATUS %.2f %.2f %.2f %d\n", odometry.x, odometry.y, odometry.heading, nav_ctrl.state);
-                    fflush(stdout);
+                if (distance < arrival_tolerance) {
+                    if (nav_ctrl.is_bucket_target) {
+                        // Bucket approach: transition to rotation phase
+                        printf("BUCKET_ZONE\\n");
+                        fflush(stdout);
+                        nav_ctrl.state = NAV_BUCKET_ROTATE;
+                        
+                        // Send immediate STATUS update
+                        printf("STATUS %.2f %.2f %.2f %d\\n", odometry.x, odometry.y, odometry.heading, nav_ctrl.state);
+                        fflush(stdout);
+                    } else {
+                        // Normal arrival (center or other targets)
+                        printf("ARRIVED\\n");
+                        fflush(stdout);
+                        nav_ctrl.state = NAV_IDLE;
+
+                        // Send immediate STATUS update so Python knows we arrived
+                        printf("STATUS %.2f %.2f %.2f %d\\n", odometry.x, odometry.y, odometry.heading, nav_ctrl.state);
+                        fflush(stdout);
+                    }
                 } else if (fabs(heading_diff) > 5.0) { // Turn required
                     nav_ctrl.state = NAV_TURNING;
                     nav_ctrl.target_heading = target_heading;
@@ -283,22 +129,16 @@ void* coordinated_control_thread(void* arg) {
                     encoders[0].move_start_counts = encoders[0].total_counts; // Capture start position
                     encoders[0].target_counts = calculate_turn_counts(heading_diff);
                     encoders[0].has_target = 1;
-                    encoders[0].stall_count = 0;
-                    encoders[0].stall_check_time = current_time;
-                    encoders[0].stall_last_position = 0;
                     pthread_mutex_unlock(&motors[0].lock);
 
                     pthread_mutex_lock(&motors[1].lock);
                     encoders[1].move_start_counts = encoders[1].total_counts; // Capture start position
                     encoders[1].target_counts = -calculate_turn_counts(heading_diff); // Differential
                     encoders[1].has_target = 1;
-                    encoders[1].stall_count = 0;
-                    encoders[1].stall_check_time = current_time;
-                    encoders[1].stall_last_position = 0;
                     pthread_mutex_unlock(&motors[1].lock);
 
                     // Send immediate STATUS to notify Python we started turning
-                    printf("STATUS %.2f %.2f %.2f %d\n", odometry.x, odometry.y, odometry.heading, nav_ctrl.state);
+                    printf("STATUS %.2f %.2f %.2f %d\\n", odometry.x, odometry.y, odometry.heading, nav_ctrl.state);
                     fflush(stdout);
 
                 } else { // Drive required
@@ -308,31 +148,19 @@ void* coordinated_control_thread(void* arg) {
                     // Reset Encoders for local move
                     int32_t counts = (int32_t)(distance * COUNTS_PER_FOOT);
                     pthread_mutex_lock(&motors[0].lock);
-// encoders[0].start_raw_angle = encoders[0].current_raw_angle; // REMOVED
-                    // encoders[0].rotation_count = 0; // REMOVED
-                    // encoders[0].total_counts = 0; // REMOVED
                     encoders[0].move_start_counts = encoders[0].total_counts;
                     encoders[0].target_counts = counts;
                     encoders[0].has_target = 1;
-                    encoders[0].stall_count = 0;
-                    encoders[0].stall_check_time = current_time;
-                    encoders[0].stall_last_position = 0;
                     pthread_mutex_unlock(&motors[0].lock);
 
                     pthread_mutex_lock(&motors[1].lock);
-// encoders[1].start_raw_angle = encoders[1].current_raw_angle; // REMOVED
-                    // encoders[1].rotation_count = 0; // REMOVED
-                    // encoders[1].total_counts = 0; // REMOVED
                     encoders[1].move_start_counts = encoders[1].total_counts;
                     encoders[1].target_counts = counts;
                     encoders[1].has_target = 1;
-                    encoders[1].stall_count = 0;
-                    encoders[1].stall_check_time = current_time;
-                    encoders[1].stall_last_position = 0;
                     pthread_mutex_unlock(&motors[1].lock);
 
                     // Send immediate STATUS to notify Python we started driving
-                    printf("STATUS %.2f %.2f %.2f %d\n", odometry.x, odometry.y, odometry.heading, nav_ctrl.state);
+                    printf("STATUS %.2f %.2f %.2f %d\\n", odometry.x, odometry.y, odometry.heading, nav_ctrl.state);
                     fflush(stdout);
                 }
                 break;
@@ -342,11 +170,17 @@ void* coordinated_control_thread(void* arg) {
             case NAV_DRIVING: {
                 int left_done = 0, right_done = 0;
 
-                // Simple on/off control - no proportional deceleration
-                // Use global PWM limits (can be adjusted via setpwm command)
-                // Apply speed multiplier from slider (0.0 - 1.0)
-                int MAX_PWM = (int)(g_max_pwm * nav_ctrl.speed_multiplier);
-                if (MAX_PWM < g_min_pwm) MAX_PWM = g_min_pwm; // Ensure we can move
+                // PWM limits are already in nanoseconds from slider
+                // Apply speed multiplier by scaling the range around neutral
+                int range_ns = g_max_pwm_ns - NEUTRAL_NS;
+                int MAX_PWM_NS = NEUTRAL_NS + (int)(range_ns * nav_ctrl.speed_percent);
+                
+                range_ns = NEUTRAL_NS - g_min_pwm_ns;
+                int MIN_PWM_NS = NEUTRAL_NS - (int)(range_ns * nav_ctrl.speed_percent);
+                
+                // Ensure we have valid values
+                if (MAX_PWM_NS < NEUTRAL_NS + 1000) MAX_PWM_NS = NEUTRAL_NS + 1000;
+                if (MIN_PWM_NS > NEUTRAL_NS - 1000) MIN_PWM_NS = NEUTRAL_NS - 1000;
 
                 // Check Left
                  pthread_mutex_lock(&motors[0].lock);
@@ -359,50 +193,60 @@ void* coordinated_control_thread(void* arg) {
                         // Within stop threshold - we're done
                         set_motor_speed(0, 0, 1);
                         encoders[0].has_target = 0;
-                        encoders[0].stall_count = 0;
-                        left_done = 1;
-                    } else if (abs(error) < DEADBAND_THRESHOLD && encoders[0].stall_count == 0) {
-                        // Within deadband and not stalled - close enough, stop
-                        set_motor_speed(0, 0, 1);
-                        encoders[0].has_target = 0;
+                        encoders[0].ramp_start_time = 0.0; // Reset ramp
                         left_done = 1;
                     } else {
-                        // Stall detection
                         double current_time = get_time_sec();
                         
-                        if (current_time - encoders[0].stall_check_time > 0.5) {
-                            // Using current_relative for stall check is fine as it moves same as absolute
-                            int32_t position_change = abs(current_relative - encoders[0].stall_last_position);
-                            if (position_change < 20 && abs(error) > 100) {
-                                encoders[0].stall_count++;
-                                fprintf(stderr, "Left motor stalled (count: %d), error: %d\n", encoders[0].stall_count, error);
-                            } else {
-                                encoders[0].stall_count = 0;
-                            }
-                            encoders[0].stall_last_position = current_relative;
-                            encoders[0].stall_check_time = current_time;
+                        // Smooth ramping control with acceleration and deceleration
+                        // Initialize ramp start time if not set
+                        if (encoders[0].ramp_start_time == 0.0) {
+                            encoders[0].ramp_start_time = current_time;
                         }
-
-                        // Simple Bang-Bang Control (No PID/Proportional)
-                        int pwm;
                         
+                        // Acceleration phase: ramp up from 0 to full speed
+                        double elapsed = current_time - encoders[0].ramp_start_time;
+                        double accel_factor = elapsed / RAMP_UP_TIME;
+                        if (accel_factor > 1.0) accel_factor = 1.0; // Cap at 100%
+                        
+                        // Deceleration phase: slow down when approaching target
+                        double decel_factor = 1.0;
+                        int32_t abs_error = abs(error);
+                        if (abs_error < DECEL_ZONE_COUNTS) {
+                            // Within deceleration zone: reduce speed proportionally
+                            decel_factor = (double)abs_error / DECEL_ZONE_COUNTS;
+                            // Ensure minimum speed to prevent stalling before reaching target
+                            if (decel_factor < 0.2) decel_factor = 0.2;
+                        }
+                        
+                        // Combined ramp factor: use minimum of accel and decel
+                        double ramp_factor = (accel_factor < decel_factor) ? accel_factor : decel_factor;
+                        
+                        // Determine direction and target pulse width
+                        int target_pwm_ns;
                         if (error > 0) {
-                            pwm = MAX_PWM;
+                            // Forward: ramp from NEUTRAL to MAX_PWM_NS
+                            int pwm_range = MAX_PWM_NS - NEUTRAL_NS;
+                            target_pwm_ns = NEUTRAL_NS + (int)(pwm_range * ramp_factor);
                         } else {
-                            pwm = -MAX_PWM;
+                            // Reverse: ramp from NEUTRAL to MIN_PWM_NS
+                            int pwm_range = NEUTRAL_NS - MIN_PWM_NS;
+                            target_pwm_ns = NEUTRAL_NS - (int)(pwm_range * ramp_factor);
+                        }
+                        
+                        // Convert to percentage for set_motor_speed
+                        int pwm_percent;
+                        if (target_pwm_ns > NEUTRAL_NS) {
+                            // Forward
+                            pwm_percent = ((target_pwm_ns - NEUTRAL_NS) * 100) / (FORWARD_MAX_NS - NEUTRAL_NS);
+                        } else if (target_pwm_ns < NEUTRAL_NS) {
+                            // Reverse
+                            pwm_percent = -((NEUTRAL_NS - target_pwm_ns) * 100) / (NEUTRAL_NS - REVERSE_MAX_NS);
+                        } else {
+                            pwm_percent = 0;
                         }
 
-                        // Stall compensation - boost power if stuck
-                        int boost = encoders[0].stall_count * 10;
-                        if (pwm > 0) {
-                            pwm += boost;
-                            if (pwm > 100) pwm = 100;
-                        } else {
-                            pwm -= boost;
-                            if (pwm < -100) pwm = -100;
-                        }
-
-                        set_motor_speed(0, pwm, 1);
+                        set_motor_speed(0, pwm_percent, 1);
                     }
                  } else {
                      set_motor_speed(0, 0, 1);
@@ -421,48 +265,60 @@ void* coordinated_control_thread(void* arg) {
                         // Within stop threshold - we're done
                         set_motor_speed(1, 0, 1);
                         encoders[1].has_target = 0;
-                        encoders[1].stall_count = 0;
-                        right_done = 1;
-                    } else if (abs(error) < DEADBAND_THRESHOLD && encoders[1].stall_count == 0) {
-                        // Within deadband and not stalled - close enough, stop
-                        set_motor_speed(1, 0, 1);
-                        encoders[1].has_target = 0;
+                        encoders[1].ramp_start_time = 0.0; // Reset ramp
                         right_done = 1;
                     } else {
-                        // Stall detection
                         double current_time = get_time_sec(); 
-                        if (current_time - encoders[1].stall_check_time > 0.5) {
-                            int32_t position_change = abs(current_relative - encoders[1].stall_last_position);
-                            if (position_change < 20 && abs(error) > 100) {
-                                encoders[1].stall_count++;
-                                fprintf(stderr, "Right motor stalled (count: %d), error: %d\n", encoders[1].stall_count, error);
-                            } else {
-                                encoders[1].stall_count = 0;
-                            }
-                            encoders[1].stall_last_position = current_relative;
-                            encoders[1].stall_check_time = current_time;
-                        }
-
-                         // Simple Bang-Bang Control (No PID/Proportional)
-                        int pwm;
                         
+                        // Smooth ramping control with acceleration and deceleration
+                        // Initialize ramp start time if not set
+                        if (encoders[1].ramp_start_time == 0.0) {
+                            encoders[1].ramp_start_time = current_time;
+                        }
+                        
+                        // Acceleration phase: ramp up from 0 to full speed
+                        double elapsed = current_time - encoders[1].ramp_start_time;
+                        double accel_factor = elapsed / RAMP_UP_TIME;
+                        if (accel_factor > 1.0) accel_factor = 1.0; // Cap at 100%
+                        
+                        // Deceleration phase: slow down when approaching target
+                        double decel_factor = 1.0;
+                        int32_t abs_error = abs(error);
+                        if (abs_error < DECEL_ZONE_COUNTS) {
+                            // Within deceleration zone: reduce speed proportionally
+                            decel_factor = (double)abs_error / DECEL_ZONE_COUNTS;
+                            // Ensure minimum speed to prevent stalling before reaching target
+                            if (decel_factor < 0.2) decel_factor = 0.2;
+                        }
+                        
+                        // Combined ramp factor: use minimum of accel and decel
+                        double ramp_factor = (accel_factor < decel_factor) ? accel_factor : decel_factor;
+                        
+                        // Determine direction and target pulse width
+                        int target_pwm_ns;
                         if (error > 0) {
-                            pwm = MAX_PWM;
+                            // Forward: ramp from NEUTRAL to MAX_PWM_NS
+                            int pwm_range = MAX_PWM_NS - NEUTRAL_NS;
+                            target_pwm_ns = NEUTRAL_NS + (int)(pwm_range * ramp_factor);
                         } else {
-                            pwm = -MAX_PWM;
+                            // Reverse: ramp from NEUTRAL to MIN_PWM_NS
+                            int pwm_range = NEUTRAL_NS - MIN_PWM_NS;
+                            target_pwm_ns = NEUTRAL_NS - (int)(pwm_range * ramp_factor);
+                        }
+                        
+                        // Convert to percentage for set_motor_speed
+                        int pwm_percent;
+                        if (target_pwm_ns > NEUTRAL_NS) {
+                            // Forward
+                            pwm_percent = ((target_pwm_ns - NEUTRAL_NS) * 100) / (FORWARD_MAX_NS - NEUTRAL_NS);
+                        } else if (target_pwm_ns < NEUTRAL_NS) {
+                            // Reverse
+                            pwm_percent = -((NEUTRAL_NS - target_pwm_ns) * 100) / (NEUTRAL_NS - REVERSE_MAX_NS);
+                        } else {
+                            pwm_percent = 0;
                         }
 
-                        // Stall compensation - boost power if stuck
-                        int boost = encoders[1].stall_count * 10;
-                        if (pwm > 0) {
-                            pwm += boost;
-                            if (pwm > 100) pwm = 100;
-                        } else {
-                            pwm -= boost;
-                            if (pwm < -100) pwm = -100;
-                        }
-
-                        set_motor_speed(1, pwm, 1);
+                        set_motor_speed(1, pwm_percent, 1);
                     }
                  } else {
                      set_motor_speed(1, 0, 1);
@@ -471,13 +327,107 @@ void* coordinated_control_thread(void* arg) {
                  pthread_mutex_unlock(&motors[1].lock);
 
                  if (left_done && right_done) {
-                     nav_ctrl.state = NAV_GOTO; // Re-evaluate
+                     // Check if we just finished the 180-degree rotation for bucket approach
+                     if (nav_ctrl.is_bucket_target && nav_ctrl.state == NAV_TURNING) {
+                         // Check if we're rotating at the bucket (not initial approach turn)
+                         double dx = nav_ctrl.bucket_x - odometry.x;
+                         double dy = nav_ctrl.bucket_y - odometry.y;
+                         double dist_to_bucket = sqrt(dx*dx + dy*dy);
+                         
+                         if (dist_to_bucket < 2.0) { // We're near the bucket (within 2ft)
+                             // Transition to backup phase
+                             nav_ctrl.state = NAV_BUCKET_BACKUP;
+                         } else {
+                             // Still approaching, continue normal navigation
+                             nav_ctrl.state = NAV_GOTO;
+                         }
+                     } else {
+                         // Normal re-evaluation
+                         nav_ctrl.state = NAV_GOTO;
+                     }
 
                      // Send immediate STATUS to notify Python of state change
                      printf("STATUS %.2f %.2f %.2f %d\n", odometry.x, odometry.y, odometry.heading, nav_ctrl.state);
                      fflush(stdout);
                  }
                  break;
+            }
+
+            case NAV_BUCKET_ROTATE: {
+                // Rotate 180 degrees (shortest direction)
+                double target_heading = odometry.heading + 180.0;
+                if (target_heading >= 360.0) target_heading -= 360.0;
+                
+                // Calculate heading difference (shortest path)
+                double heading_diff = target_heading - odometry.heading;
+                while (heading_diff > 180) heading_diff -= 360;
+                while (heading_diff < -180) heading_diff += 360;
+
+                // Set up rotation
+                pthread_mutex_lock(&motors[0].lock);
+                encoders[0].move_start_counts = encoders[0].total_counts;
+                encoders[0].target_counts = calculate_turn_counts(heading_diff);
+                encoders[0].has_target = 1;
+                pthread_mutex_unlock(&motors[0].lock);
+
+                pthread_mutex_lock(&motors[1].lock);
+                encoders[1].move_start_counts = encoders[1].total_counts;
+                encoders[1].target_counts = -calculate_turn_counts(heading_diff);
+                encoders[1].has_target = 1;
+                pthread_mutex_unlock(&motors[1].lock);
+
+                // Transition to executing the rotation
+                nav_ctrl.state = NAV_TURNING;
+                nav_ctrl.target_heading = target_heading;
+
+                printf("ROTATING_180\n");
+                printf("STATUS %.2f %.2f %.2f %d\n", odometry.x, odometry.y, odometry.heading, nav_ctrl.state);
+                fflush(stdout);
+                break;
+            }
+
+            case NAV_BUCKET_BACKUP: {
+                // Calculate distance from current position to bucket
+                double dx = nav_ctrl.bucket_x - odometry.x;
+                double dy = nav_ctrl.bucket_y - odometry.y;
+                double current_distance = sqrt(dx*dx + dy*dy);
+                
+                // Calculate backup distance needed to reach 0.25ft from bucket
+                double backup_distance = current_distance - 0.25;
+                
+                if (backup_distance > 0.1) { // Only backup if we need to move more than 0.1ft
+                    // Set up reverse motion (negative counts)
+                    int32_t counts = -(int32_t)(backup_distance * COUNTS_PER_FOOT);
+                    
+                    pthread_mutex_lock(&motors[0].lock);
+                    encoders[0].move_start_counts = encoders[0].total_counts;
+                    encoders[0].target_counts = counts;
+                    encoders[0].has_target = 1;
+                    pthread_mutex_unlock(&motors[0].lock);
+
+                    pthread_mutex_lock(&motors[1].lock);
+                    encoders[1].move_start_counts = encoders[1].total_counts;
+                    encoders[1].target_counts = counts;
+                    encoders[1].has_target = 1;
+                    pthread_mutex_unlock(&motors[1].lock);
+
+                    // Transition to driving (which handles both forward and reverse)
+                    nav_ctrl.state = NAV_DRIVING;
+                    nav_ctrl.target_distance = backup_distance;
+
+                    printf("BACKING_UP %.2f ft\n", backup_distance);
+                    printf("STATUS %.2f %.2f %.2f %d\n", odometry.x, odometry.y, odometry.heading, nav_ctrl.state);
+                    fflush(stdout);
+                } else {
+                    // Already close enough, finish
+                    printf("ARRIVED\n");
+                    nav_ctrl.state = NAV_IDLE;
+                    nav_ctrl.is_bucket_target = 0; // Clear bucket flag
+                    
+                    printf("STATUS %.2f %.2f %.2f %d\n", odometry.x, odometry.y, odometry.heading, nav_ctrl.state);
+                    fflush(stdout);
+                }
+                break;
             }
         }
 
@@ -520,9 +470,11 @@ void update_encoder_rotation(EncoderState *enc, int16_t raw_angle, int motor_id)
     enc->motor_state = get_motor_state(pwm_ns);
     
     // Initialize on first valid read
+    // Capture the initial encoder position so we effectively start at 0
     if (enc->last_raw_angle < 0) {
         enc->last_raw_angle = raw_angle;
         enc->current_raw_angle = raw_angle;
+        enc->start_raw_angle = raw_angle;  // Set offset to current position
         enc->last_motor_state = enc->motor_state;
         return;
     }
@@ -671,7 +623,18 @@ void update_odometry(void) {
     kf_heading.angle = odometry.heading;
 }
 
-// --- Command processing ---
+/**
+ * Process incoming command from stdin
+ * 
+ * Parses and executes commands from the Python backend including:
+ * - goto: Autonomous navigation to coordinates
+ * - speed: Set navigation speed multiplier
+ * - setpwm: Set PWM limits from slider
+ * - setpos: Manually set odometry position
+ * - calibrate: Calibrate IMU and reset position
+ * - stop: Emergency stop and log dump
+ * - pulse: Direct PWM control (joystick mode)
+ */
 void process_command(char* cmd) {
     cmd[strcspn(cmd, "\n")] = 0;
 
@@ -681,12 +644,25 @@ void process_command(char* cmd) {
 
     if (strncasecmp(cmd, "goto", 4) == 0) {
         double x, y;
-        if (sscanf(cmd + 4, "%lf %lf", &x, &y) == 2) {
-            current_mode = MODE_VOICE_NAV; // Voice control mode
+        int is_bucket = 0;
+        
+        // Try to parse with optional bucket flag: "goto x y [is_bucket]"
+        int parsed = sscanf(cmd + 4, "%lf %lf %d", &x, &y, &is_bucket);
+        
+        if (parsed >= 2) { // At least x and y were parsed
+            set_control_mode(MODE_VOICE_NAV);
             nav_ctrl.target_x = x;
             nav_ctrl.target_y = y;
+            nav_ctrl.is_bucket_target = is_bucket;
+            
+            if (is_bucket) {
+                // Store actual bucket coordinates for backup calculation
+                nav_ctrl.bucket_x = x;
+                nav_ctrl.bucket_y = y;
+            }
+            
             nav_ctrl.state = NAV_GOTO;
-            printf("OK goto %.2f %.2f\n", x, y);
+            printf("OK goto %.2f %.2f (bucket=%d)\n", x, y, is_bucket);
             fflush(stdout);
 
             // Send immediate STATUS update so Python knows state changed
@@ -699,7 +675,7 @@ void process_command(char* cmd) {
         if (sscanf(cmd + 5, "%lf", &s) == 1) {
             if (s < 0.0) s = 0.0;
             if (s > 1.0) s = 1.0;
-            nav_ctrl.speed_multiplier = s;
+            nav_ctrl.speed_percent = s;
             printf("OK speed %.2f\n", s);
             fflush(stdout);
         }
@@ -718,9 +694,17 @@ void process_command(char* cmd) {
                 max_pwm = temp;
             }
 
-            g_min_pwm = min_pwm;
-            g_max_pwm = max_pwm;
-            printf("OK setpwm %d %d\n", min_pwm, max_pwm);
+            // Convert percentage values to nanoseconds
+            // JavaScript sends percentages, we convert to pulse widths
+            // min_pwm and max_pwm are 0-100, representing range from neutral
+            
+            // For reverse (min): percentage of range from NEUTRAL to REVERSE_MAX
+            g_min_pwm_ns = NEUTRAL_NS - ((NEUTRAL_NS - REVERSE_MAX_NS) * min_pwm / 100);
+            
+            // For forward (max): percentage of range from NEUTRAL to FORWARD_MAX
+            g_max_pwm_ns = NEUTRAL_NS + ((FORWARD_MAX_NS - NEUTRAL_NS) * max_pwm / 100);
+            
+            printf("OK setpwm %d %d (min=%dns, max=%dns)\n", min_pwm, max_pwm, g_min_pwm_ns, g_max_pwm_ns);
             fflush(stdout);
         }
     }
@@ -741,8 +725,37 @@ void process_command(char* cmd) {
             fflush(stdout);
         }
     }
+    else if (strncasecmp(cmd, "calibrate", 9) == 0) {
+        // Calibrate IMU and reset position to start
+        imu_calibrate(500);  // 2.5 second calibration for better accuracy
+        
+        // Reset to start position (0, 15, 0)
+        odometry.x = 0.0;
+        odometry.y = 15.0;
+        odometry.heading = 0.0;
+        
+        // Reset encoder offsets to current position (zero the encoders)
+        pthread_mutex_lock(&motors[0].lock);
+        encoders[0].start_raw_angle = encoders[0].current_raw_angle;
+        pthread_mutex_unlock(&motors[0].lock);
+        
+        pthread_mutex_lock(&motors[1].lock);
+        encoders[1].start_raw_angle = encoders[1].current_raw_angle;
+        pthread_mutex_unlock(&motors[1].lock);
+        
+        // Reset accumulation to avoid jumps
+        odometry.last_left_total = encoders[0].total_counts;
+        odometry.last_right_total = encoders[1].total_counts;
+        
+        printf("OK calibrate\n");
+        fflush(stdout);
+        
+        // Send immediate STATUS update
+        printf("STATUS %.2f %.2f %.2f %d\n", odometry.x, odometry.y, odometry.heading, nav_ctrl.state);
+        fflush(stdout);
+    }
     else if (strncasecmp(cmd, "stop", 4) == 0) {
-        current_mode = MODE_IDLE; // Stopped/idle mode
+        set_control_mode(MODE_IDLE);
         nav_ctrl.state = NAV_IDLE;
         for (int i = 0; i < 2; i++) {
             pthread_mutex_lock(&motors[i].lock);
@@ -750,9 +763,9 @@ void process_command(char* cmd) {
             set_motor_speed(i, 0, 1); // IMMEDIATE STOP
             pthread_mutex_unlock(&motors[i].lock);
         }
-        // Force log dump
+        // Force log dump and reset for new session
         dump_log();
-        log_index = 0; // Reset log index
+        init_log_system();
         printf("OK stopall (log dumped)\n");
         fflush(stdout);
     }
@@ -765,7 +778,7 @@ void process_command(char* cmd) {
     else if (strncasecmp(cmd, "pulse", 5) == 0) {
         int left_ns, right_ns;
         if (sscanf(cmd + 5, "%d %d", &left_ns, &right_ns) == 2) {
-            current_mode = MODE_JOYSTICK; // Joystick/manual control mode
+            set_control_mode(MODE_JOYSTICK);
 
             // Disable navigation
             nav_ctrl.state = NAV_IDLE;
@@ -809,6 +822,12 @@ void process_command(char* cmd) {
 
 }
 
+/**
+ * Command input thread
+ * 
+ * Reads commands from stdin and processes them. Runs until EOF or
+ * the running flag is cleared.
+ */
 void* command_input_thread(void* arg) {
     (void)arg;
     char buffer[256];
@@ -819,33 +838,43 @@ void* command_input_thread(void* arg) {
     return NULL;
 }
 
+/**
+ * Main entry point
+ * 
+ * Initializes all subsystems (I2C, PWM, IMU, logging), spawns control threads,
+ * and waits for shutdown signal.
+ */
 int main(void) {
+    // Set up signal handlers for graceful shutdown
     signal(SIGINT, signal_handler);
     signal(SIGTERM, signal_handler);
 
+    // Initialize I2C bus for sensors
     if (i2c_init() < 0) {
         fprintf(stderr, "ERROR: I2C init failed\n");
         return 1;
     }
 
+    // Initialize PWM for motor control
     if (pwm_init() < 0) {
         fprintf(stderr, "ERROR: PWM init failed\n");
         i2c_cleanup();
         return 1;
     }
 
+    // Initialize telemetry logging system
     init_log_system();
 
-    // Initialize IMU
+    // Initialize IMU (optional, system continues without it)
     if (imu_init() < 0) {
         fprintf(stderr, "WARNING: IMU init failed (check wiring to I2C3). Continuing without IMU.\n");
     } else {
         imu_calibrate(500); // 2.5 second calibration for better accuracy
     }
 
-    // Initialize Kalman Filter
+    // Initialize Kalman Filter for heading estimation
     kalman_init(&kf_heading);
-    kf_heading.angle = 90.0; // Initialize with start heading
+    kf_heading.angle = START_HEADING;
     last_imu_time = get_time_sec();
     
     // Initialize Encoders
@@ -855,21 +884,17 @@ int main(void) {
         encoders[i].last_raw_angle = -1; // Flag as invalid
         encoders[i].start_raw_angle = 0;
         
-        // Rotation-based tracking fields
+    // Rotation-based tracking fields
         encoders[i].rotation_count = 0;
         encoders[i].motor_state = 0;
         encoders[i].last_motor_state = 0;
         
         encoders[i].target_counts = 0;
         encoders[i].has_target = 0;
-        encoders[i].stall_last_position = 0;
-        encoders[i].stall_check_time = 0;
-        encoders[i].stall_count = 0;
     }
 
     pthread_mutex_init(&motors[0].lock, NULL);
     pthread_mutex_init(&motors[1].lock, NULL);
-    // pthread_mutex_init(&coord_move.lock, NULL); // Removed legacy lock
 
 
     fprintf(stderr, "Arming ESCs...\n");

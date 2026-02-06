@@ -41,9 +41,9 @@ class CoordinatedNavigationController:
             'current_target': self.command_queue[0].position if (self.queue_running and self.command_queue) else None
         }
         
-    def set_speed_multiplier(self, multiplier: float):
-        """Send speed command to C."""
-        self.send_command(f"speed {multiplier:.2f}")
+    def set_speed_percent(self, speed_percent: float):
+        """Send speed command to C (0.0 = 0%, 1.0 = 100%)."""
+        self.send_command(f"speed {speed_percent:.2f}")
 
     def go_to_center(self):
         """Queue center command."""
@@ -82,14 +82,25 @@ class CoordinatedNavigationController:
         self.y = y
         self.heading = heading
 
+    def calibrate(self):
+        """Calibrate gyro and reset to start position."""
+        self.send_command("calibrate")
+        # Update local mirror immediately
+        self.x = START_POSITION[0]
+        self.y = START_POSITION[1]
+        self.heading = START_HEADING
+
     def _process_next_command(self):
         if not self.command_queue:
             self.queue_running = False
             return
             
         cmd = self.command_queue[0]
-        # Send GOTO to C
-        self.send_command(f"goto {cmd.position[0]:.2f} {cmd.position[1]:.2f}")
+        # Send GOTO to C with bucket flag if it's a bucket target
+        if cmd.command_type == 'bucket':
+            self.send_command(f"goto {cmd.position[0]:.2f} {cmd.position[1]:.2f} 1")
+        else:
+            self.send_command(f"goto {cmd.position[0]:.2f} {cmd.position[1]:.2f} 0")
         print(f"[NAV] Executing: {cmd.target} -> {cmd.position}")
 
     # --- Feedback Handling (called from motor_interface) ---
@@ -101,7 +112,8 @@ class CoordinatedNavigationController:
         self.heading = heading
         
         # Map C state code to string
-        states = {0: "IDLE", 1: "TURNING", 2: "DRIVING", 3: "PLANNING"}
+        states = {0: "IDLE", 1: "TURNING", 2: "DRIVING", 3: "PLANNING", 
+                  4: "BUCKET_APPROACH", 5: "BUCKET_ROTATE", 6: "BUCKET_BACKUP"}
         new_state = states.get(state_code, "UNKNOWN")
         
         # Check if we finished a move (transition from NON-IDLE to IDLE)

@@ -70,6 +70,10 @@ class VoiceCommandProcessor:
                 heading=Config.START_HEADING
             )
             print(f"[VOICE] Position reset to {Config.START_POSITION} @ {Config.START_HEADING}°")
+            
+        elif word == 'calibrate':
+            self.nav_controller.calibrate()
+            print(f"[VOICE] Gyro calibrated and position reset to {Config.START_POSITION} @ {Config.START_HEADING}°")
 
     def _queue_target_command(self, target):
         """Queues a navigation command for a specific target."""

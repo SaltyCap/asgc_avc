@@ -34,6 +34,12 @@
                 <button id="carStopButton" class="control-button stop-btn">Stop</button>
                 <span class="status-indicator" id="carStatusDot"></span>
             </div>
+            <div class="control-group">
+                <button id="shutdownButton" class="control-button shutdown-btn">🔌 Shutdown</button>
+            </div>
+            <div class="control-group">
+                <button id="calibrateButton" class="control-button calibrate-btn">🎯 Calibrate</button>
+            </div>
         </div>
 
         <!-- Status Display -->
@@ -49,9 +55,9 @@
         <!-- PWM Limit Control (also controls speed) -->
         <div class="throttle-header">
             <span class="throttle-label">PWM Limit</span>
-            <span class="throttle-value" id="pwmLimitValue">25%</span>
+            <span class="throttle-value" id="pwmLimitValue">15%</span>
         </div>
-        <input type="range" min="5" max="100" value="25" step="5" class="throttle-slider" id="pwmLimitSlider">
+        <input type="range" min="5" max="100" value="15" step="5" class="throttle-slider" id="pwmLimitSlider">
         <div class="throttle-info">
             <span>Min: <strong id="pwMinValue">1375</strong> µs</span>
             <span>Center: <strong>1500</strong> µs</span>

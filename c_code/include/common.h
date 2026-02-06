@@ -12,7 +12,6 @@
 // Constants
 #define COUNTS_PER_REV 4096
 #define STOP_THRESHOLD 200          // Stop when within 200 counts (~0.8 inches)
-#define DEADBAND_THRESHOLD 200      // Don't reverse if within 200 counts (~0.8 inches)
 
 // Robot Physical Constants (from course_config.py)
 #define WHEEL_DIAMETER_INCHES 5.3
@@ -50,7 +49,9 @@ typedef enum {
     NAV_IDLE,
     NAV_TURNING,
     NAV_DRIVING,
-    NAV_GOTO        // Meta-state: planning move to target
+    NAV_GOTO,           // Meta-state: planning move to target
+    NAV_BUCKET_ROTATE,   // Rotating 180 degrees at bucket
+    NAV_BUCKET_BACKUP    // Backing up to 0.25ft from bucket
 } NavState;
 
 // Navigation Controller State
@@ -60,7 +61,10 @@ typedef struct {
     double target_y;
     double target_heading;  // For TURN state
     double target_distance; // For DRIVE state
-    double speed_multiplier; // 0.0 to 1.0 from slider
+    double speed_percent;    // Navigation speed: 0.0 (0%) to 1.0 (100%)
+    int is_bucket_target;   // 1 if navigating to a colored bucket
+    double bucket_x;        // Actual bucket coordinates
+    double bucket_y;
 } NavigationController;
 
 #endif

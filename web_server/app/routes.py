@@ -1,6 +1,8 @@
-from flask import Blueprint, render_template, jsonify
+from flask import Blueprint, render_template, jsonify, request
 from .config import Config
 from .motor_interface import motor_interface
+import os
+import signal
 
 # Note: nav_controller is accessed via motor_interface.nav_controller
 # This avoids circular imports and ensures we use the active controller instance.
@@ -61,3 +63,23 @@ def get_course_info():
         'center': Config.CENTER,
         'start_position': Config.START_POSITION
     })
+
+@bp.route('/api/shutdown', methods=['POST'])
+def shutdown():
+    """Gracefully shutdown the system - stops motors and exits the server."""
+    print("\n[SHUTDOWN] Shutdown requested via web interface")
+    
+    # Stop the motor interface (this will save logs via C program)
+    motor_interface.stop()
+    
+    # Schedule server shutdown
+    def shutdown_server():
+        import time
+        time.sleep(0.5)  # Give time for response to be sent
+        print("[SHUTDOWN] Terminating server process...")
+        os.kill(os.getpid(), signal.SIGTERM)
+    
+    import threading
+    threading.Thread(target=shutdown_server, daemon=True).start()
+    
+    return jsonify({'status': 'shutting_down', 'message': 'System is shutting down...'})
