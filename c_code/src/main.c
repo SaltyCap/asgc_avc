@@ -18,7 +18,7 @@ volatile int running = 1;
 
 // Odometry and navigation state
 OdometryState odometry = {START_X, START_Y, START_HEADING, 0, 0};
-NavigationController nav_ctrl = {NAV_IDLE, 0, 0, 0, 0, 0.15, 0, 0, 0};
+NavigationController nav_ctrl = {NAV_IDLE, 0, 0, 0, 0, 0, 0, 0};
 
 // IMU and Kalman filter state
 KalmanFilter kf_heading;
@@ -27,13 +27,13 @@ double last_imu_time = 0.0;
 pthread_mutex_t imu_data_lock = PTHREAD_MUTEX_INITIALIZER;
 
 // Global PWM limits from slider (nanoseconds)
-// These values are set by the web interface and control max motor speed
+// These values are set by the web interface and control max motor PWM
 int g_min_pwm_ns = 1400000;  // Minimum PWM pulse width (1400µs)
 int g_max_pwm_ns = 1600000;  // Maximum PWM pulse width (1600µs)
 
 // Motor ramping time constants
 // Using smooth ramps prevents mechanical stress and improves control stability
-#define RAMP_UP_TIME 3.0    // Seconds to ramp from neutral to max speed
+#define RAMP_UP_TIME 3.0    // Seconds to ramp from neutral to max PWM
 #define RAMP_DOWN_TIME 3.0  // Seconds to ramp from max to neutral
 #define DECEL_ZONE_FEET 3.0 // Start decelerating when within 3 feet of target
 #define DECEL_ZONE_COUNTS ((int32_t)(DECEL_ZONE_FEET * COUNTS_PER_FOOT))
@@ -169,20 +169,14 @@ void* coordinated_control_thread(void* arg) {
             case NAV_TURNING:
             case NAV_DRIVING: {
                 int left_done = 0, right_done = 0;
+                int next_left_pwm = NEUTRAL_NS;
+                int next_right_pwm = NEUTRAL_NS;
 
-                // PWM limits are already in nanoseconds from slider
-                // Apply speed multiplier by scaling the range around neutral
-                int range_ns = g_max_pwm_ns - NEUTRAL_NS;
-                int MAX_PWM_NS = NEUTRAL_NS + (int)(range_ns * nav_ctrl.speed_percent);
-                
-                range_ns = NEUTRAL_NS - g_min_pwm_ns;
-                int MIN_PWM_NS = NEUTRAL_NS - (int)(range_ns * nav_ctrl.speed_percent);
-                
-                // Ensure we have valid values
-                if (MAX_PWM_NS < NEUTRAL_NS + 1000) MAX_PWM_NS = NEUTRAL_NS + 1000;
-                if (MIN_PWM_NS > NEUTRAL_NS - 1000) MIN_PWM_NS = NEUTRAL_NS - 1000;
+                // Use global PWM limits directly from slider
+                int MAX_PWM_NS = g_max_pwm_ns;
+                int MIN_PWM_NS = g_min_pwm_ns;
 
-                // Check Left
+                // --- 1. Calculate Left Motor PWM ---
                  pthread_mutex_lock(&motors[0].lock);
                  if (encoders[0].has_target) {
                      // Calculate relative position and error
@@ -191,7 +185,7 @@ void* coordinated_control_thread(void* arg) {
 
                     if (abs(error) < STOP_THRESHOLD) {
                         // Within stop threshold - we're done
-                        set_motor_speed(0, 0, 1);
+                        next_left_pwm = NEUTRAL_NS;
                         encoders[0].has_target = 0;
                         encoders[0].ramp_start_time = 0.0; // Reset ramp
                         left_done = 1;
@@ -204,7 +198,7 @@ void* coordinated_control_thread(void* arg) {
                             encoders[0].ramp_start_time = current_time;
                         }
                         
-                        // Acceleration phase: ramp up from 0 to full speed
+                        // Acceleration phase: ramp up from neutral to target PWM
                         double elapsed = current_time - encoders[0].ramp_start_time;
                         double accel_factor = elapsed / RAMP_UP_TIME;
                         if (accel_factor > 1.0) accel_factor = 1.0; // Cap at 100%
@@ -213,9 +207,9 @@ void* coordinated_control_thread(void* arg) {
                         double decel_factor = 1.0;
                         int32_t abs_error = abs(error);
                         if (abs_error < DECEL_ZONE_COUNTS) {
-                            // Within deceleration zone: reduce speed proportionally
+                            // Within deceleration zone: reduce PWM proportionally
                             decel_factor = (double)abs_error / DECEL_ZONE_COUNTS;
-                            // Ensure minimum speed to prevent stalling before reaching target
+                            // Ensure minimum PWM to prevent stalling before reaching target
                             if (decel_factor < 0.2) decel_factor = 0.2;
                         }
                         
@@ -223,38 +217,23 @@ void* coordinated_control_thread(void* arg) {
                         double ramp_factor = (accel_factor < decel_factor) ? accel_factor : decel_factor;
                         
                         // Determine direction and target pulse width
-                        int target_pwm_ns;
                         if (error > 0) {
                             // Forward: ramp from NEUTRAL to MAX_PWM_NS
                             int pwm_range = MAX_PWM_NS - NEUTRAL_NS;
-                            target_pwm_ns = NEUTRAL_NS + (int)(pwm_range * ramp_factor);
+                            next_left_pwm = NEUTRAL_NS + (int)(pwm_range * ramp_factor);
                         } else {
                             // Reverse: ramp from NEUTRAL to MIN_PWM_NS
                             int pwm_range = NEUTRAL_NS - MIN_PWM_NS;
-                            target_pwm_ns = NEUTRAL_NS - (int)(pwm_range * ramp_factor);
+                            next_left_pwm = NEUTRAL_NS - (int)(pwm_range * ramp_factor);
                         }
-                        
-                        // Convert to percentage for set_motor_speed
-                        int pwm_percent;
-                        if (target_pwm_ns > NEUTRAL_NS) {
-                            // Forward
-                            pwm_percent = ((target_pwm_ns - NEUTRAL_NS) * 100) / (FORWARD_MAX_NS - NEUTRAL_NS);
-                        } else if (target_pwm_ns < NEUTRAL_NS) {
-                            // Reverse
-                            pwm_percent = -((NEUTRAL_NS - target_pwm_ns) * 100) / (NEUTRAL_NS - REVERSE_MAX_NS);
-                        } else {
-                            pwm_percent = 0;
-                        }
-
-                        set_motor_speed(0, pwm_percent, 1);
                     }
                  } else {
-                     set_motor_speed(0, 0, 1);
+                     next_left_pwm = NEUTRAL_NS;
                      left_done = 1;
                  }
                  pthread_mutex_unlock(&motors[0].lock);
 
-                 // Check Right
+                 // --- 2. Calculate Right Motor PWM ---
                  pthread_mutex_lock(&motors[1].lock);
                  if (encoders[1].has_target) {
                     // Calculate relative position and error
@@ -263,7 +242,7 @@ void* coordinated_control_thread(void* arg) {
 
                     if (abs(error) < STOP_THRESHOLD) {
                         // Within stop threshold - we're done
-                        set_motor_speed(1, 0, 1);
+                        next_right_pwm = NEUTRAL_NS;
                         encoders[1].has_target = 0;
                         encoders[1].ramp_start_time = 0.0; // Reset ramp
                         right_done = 1;
@@ -276,7 +255,7 @@ void* coordinated_control_thread(void* arg) {
                             encoders[1].ramp_start_time = current_time;
                         }
                         
-                        // Acceleration phase: ramp up from 0 to full speed
+                        // Acceleration phase: ramp up from neutral to target PWM
                         double elapsed = current_time - encoders[1].ramp_start_time;
                         double accel_factor = elapsed / RAMP_UP_TIME;
                         if (accel_factor > 1.0) accel_factor = 1.0; // Cap at 100%
@@ -285,9 +264,9 @@ void* coordinated_control_thread(void* arg) {
                         double decel_factor = 1.0;
                         int32_t abs_error = abs(error);
                         if (abs_error < DECEL_ZONE_COUNTS) {
-                            // Within deceleration zone: reduce speed proportionally
+                            // Within deceleration zone: reduce PWM proportionally
                             decel_factor = (double)abs_error / DECEL_ZONE_COUNTS;
-                            // Ensure minimum speed to prevent stalling before reaching target
+                            // Ensure minimum PWM to prevent stalling before reaching target
                             if (decel_factor < 0.2) decel_factor = 0.2;
                         }
                         
@@ -295,36 +274,25 @@ void* coordinated_control_thread(void* arg) {
                         double ramp_factor = (accel_factor < decel_factor) ? accel_factor : decel_factor;
                         
                         // Determine direction and target pulse width
-                        int target_pwm_ns;
                         if (error > 0) {
                             // Forward: ramp from NEUTRAL to MAX_PWM_NS
                             int pwm_range = MAX_PWM_NS - NEUTRAL_NS;
-                            target_pwm_ns = NEUTRAL_NS + (int)(pwm_range * ramp_factor);
+                            next_right_pwm = NEUTRAL_NS + (int)(pwm_range * ramp_factor);
                         } else {
                             // Reverse: ramp from NEUTRAL to MIN_PWM_NS
                             int pwm_range = NEUTRAL_NS - MIN_PWM_NS;
-                            target_pwm_ns = NEUTRAL_NS - (int)(pwm_range * ramp_factor);
+                            next_right_pwm = NEUTRAL_NS - (int)(pwm_range * ramp_factor);
                         }
-                        
-                        // Convert to percentage for set_motor_speed
-                        int pwm_percent;
-                        if (target_pwm_ns > NEUTRAL_NS) {
-                            // Forward
-                            pwm_percent = ((target_pwm_ns - NEUTRAL_NS) * 100) / (FORWARD_MAX_NS - NEUTRAL_NS);
-                        } else if (target_pwm_ns < NEUTRAL_NS) {
-                            // Reverse
-                            pwm_percent = -((NEUTRAL_NS - target_pwm_ns) * 100) / (NEUTRAL_NS - REVERSE_MAX_NS);
-                        } else {
-                            pwm_percent = 0;
-                        }
-
-                        set_motor_speed(1, pwm_percent, 1);
                     }
                  } else {
-                     set_motor_speed(1, 0, 1);
+                     next_right_pwm = NEUTRAL_NS;
                      right_done = 1;
                  }
                  pthread_mutex_unlock(&motors[1].lock);
+
+                 // --- 3. Apply Updates Simultaneously ---
+                 set_motor_pwm(0, next_left_pwm);
+                 set_motor_pwm(1, next_right_pwm);
 
                  if (left_done && right_done) {
                      // Check if we just finished the 180-degree rotation for bucket approach
@@ -628,7 +596,6 @@ void update_odometry(void) {
  * 
  * Parses and executes commands from the Python backend including:
  * - goto: Autonomous navigation to coordinates
- * - speed: Set navigation speed multiplier
  * - setpwm: Set PWM limits from slider
  * - setpos: Manually set odometry position
  * - calibrate: Calibrate IMU and reset position
@@ -670,41 +637,32 @@ void process_command(char* cmd) {
             fflush(stdout);
         }
     }
-    else if (strncasecmp(cmd, "speed", 5) == 0) {
-        double s;
-        if (sscanf(cmd + 5, "%lf", &s) == 1) {
-            if (s < 0.0) s = 0.0;
-            if (s > 1.0) s = 1.0;
-            nav_ctrl.speed_percent = s;
-            printf("OK speed %.2f\n", s);
-            fflush(stdout);
-        }
-    }
+
     else if (strncasecmp(cmd, "setpwm", 6) == 0) {
-        int min_pwm, max_pwm;
-        if (sscanf(cmd + 6, "%d %d", &min_pwm, &max_pwm) == 2) {
+        int min_pwm_percent, max_pwm_percent;
+        if (sscanf(cmd + 6, "%d %d", &min_pwm_percent, &max_pwm_percent) == 2) {
             // Validate ranges
-            if (min_pwm < 20) min_pwm = 20;
-            if (min_pwm > 100) min_pwm = 100;
-            if (max_pwm < 20) max_pwm = 20;
-            if (max_pwm > 100) max_pwm = 100;
-            if (min_pwm > max_pwm) {
-                int temp = min_pwm;
-                min_pwm = max_pwm;
-                max_pwm = temp;
+            if (min_pwm_percent < 0) min_pwm_percent = 0;
+            if (min_pwm_percent > 100) min_pwm_percent = 100;
+            if (max_pwm_percent < 0) max_pwm_percent = 0;
+            if (max_pwm_percent > 100) max_pwm_percent = 100;
+            if (min_pwm_percent > max_pwm_percent) {
+                int temp = min_pwm_percent;
+                min_pwm_percent = max_pwm_percent;
+                max_pwm_percent = temp;
             }
 
             // Convert percentage values to nanoseconds
             // JavaScript sends percentages, we convert to pulse widths
-            // min_pwm and max_pwm are 0-100, representing range from neutral
+            // min_pwm_percent and max_pwm_percent are 0-100, representing range from neutral
             
             // For reverse (min): percentage of range from NEUTRAL to REVERSE_MAX
-            g_min_pwm_ns = NEUTRAL_NS - ((NEUTRAL_NS - REVERSE_MAX_NS) * min_pwm / 100);
+            g_min_pwm_ns = NEUTRAL_NS - ((NEUTRAL_NS - REVERSE_MAX_NS) * min_pwm_percent / 100);
             
             // For forward (max): percentage of range from NEUTRAL to FORWARD_MAX
-            g_max_pwm_ns = NEUTRAL_NS + ((FORWARD_MAX_NS - NEUTRAL_NS) * max_pwm / 100);
+            g_max_pwm_ns = NEUTRAL_NS + ((FORWARD_MAX_NS - NEUTRAL_NS) * max_pwm_percent / 100);
             
-            printf("OK setpwm %d %d (min=%dns, max=%dns)\n", min_pwm, max_pwm, g_min_pwm_ns, g_max_pwm_ns);
+            printf("OK setpwm %d %d (min=%dns, max=%dns)\n", min_pwm_percent, max_pwm_percent, g_min_pwm_ns, g_max_pwm_ns);
             fflush(stdout);
         }
     }
@@ -760,7 +718,7 @@ void process_command(char* cmd) {
         for (int i = 0; i < 2; i++) {
             pthread_mutex_lock(&motors[i].lock);
             encoders[i].has_target = 0;
-            set_motor_speed(i, 0, 1); // IMMEDIATE STOP
+            set_motor_pwm(i, NEUTRAL_NS); // IMMEDIATE STOP
             pthread_mutex_unlock(&motors[i].lock);
         }
         // Force log dump and reset for new session
@@ -802,15 +760,11 @@ void process_command(char* cmd) {
 
             // Write pulse widths directly (Protected by locks)
             pthread_mutex_lock(&motors[0].lock);
-            lseek(motors[0].pwm_duty_fd, 0, SEEK_SET);
-            dprintf(motors[0].pwm_duty_fd, "%d", left_ns);
-            motors[0].last_pulse_ns = left_ns;
+            set_motor_pwm(0, left_ns);
             pthread_mutex_unlock(&motors[0].lock);
 
             pthread_mutex_lock(&motors[1].lock);
-            lseek(motors[1].pwm_duty_fd, 0, SEEK_SET);
-            dprintf(motors[1].pwm_duty_fd, "%d", right_ns);
-            motors[1].last_pulse_ns = right_ns;
+            set_motor_pwm(1, right_ns);
             pthread_mutex_unlock(&motors[1].lock);
 
 

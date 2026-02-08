@@ -366,7 +366,7 @@
                 <span>PWM Limit</span>
                 <span class="slider-value" id="pwmLimitValue">25%</span>
             </div>
-            <input type="range" min="5" max="100" value="25" step="5" class="pwm-slider" id="pwmLimitSlider">
+            <input type="range" min="0" max="100" value="25" step="5" class="pwm-slider" id="pwmLimitSlider">
             <div class="pulse-width-info">
                 <span>Min: <strong id="pwMinValue">1375</strong> µs</span>
                 <span>Center: <strong>1500</strong> µs</span>
@@ -431,22 +431,17 @@
 
         function sendPwmSettings() {
             // Calculate min/max PWM percentages from limit
-            const BASE_MIN_PWM = 45;
+            const BASE_MIN_PWM = 100;
             const BASE_MAX_PWM = 100;
 
             let minPwm = Math.round(BASE_MIN_PWM * pwmLimit / 100);
             let maxPwm = Math.round(BASE_MAX_PWM * pwmLimit / 100);
 
-            // Ensure minimum is at least 20% when limit > 0
-            if (pwmLimit > 0 && minPwm < 20) {
-                minPwm = 20;
-            }
-
             if (motorWs && motorWs.readyState === WebSocket.OPEN) {
                 motorWs.send(JSON.stringify({
                     type: 'set_pwm',
-                    min_pwm: minPwm,
-                    max_pwm: maxPwm
+                    min_pwm_percent: minPwm,
+                    max_pwm_percent: maxPwm
                 }));
                 console.log(`PWM Limit: ${pwmLimit}% (Min=${minPwm}%, Max=${maxPwm}%)`);
             }
@@ -488,8 +483,8 @@
 
                     // Handle PWM settings broadcast from server
                     if (data.type === 'pwm_set') {
-                        const receivedMinPwm = data.min_pwm || 45;
-                        const receivedMaxPwm = data.max_pwm || 100;
+                        const receivedMinPwm = data.min_pwm_percent || 45;
+                        const receivedMaxPwm = data.max_pwm_percent || 100;
 
                         // Calculate the limit percentage from max_pwm (assuming BASE_MAX_PWM = 100)
                         const calculatedLimit = Math.round((receivedMaxPwm / 100) * 100);

@@ -21,7 +21,7 @@ typedef struct {
     int id;
     int pwm_duty_fd;
     int pwm_enable_fd;
-    int current_speed;
+
     int last_pulse_ns;           // Last PWM pulse width sent (for logging)
     pthread_mutex_t lock;
 } Motor;
@@ -56,7 +56,7 @@ extern NavigationController nav_ctrl;
 
 int pwm_init(void);
 void pwm_cleanup(void);
-void set_motor_speed(int motor_id, int speed_percent, int immediate);
+void set_motor_pwm(int motor_id, int pulse_ns);
 
 // Motor state accessor functions
 int8_t get_left_motor_state(void);   // Returns -1 (reverse), 0 (neutral), 1 (forward)

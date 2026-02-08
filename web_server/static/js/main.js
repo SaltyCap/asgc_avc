@@ -254,8 +254,8 @@ function connectMotorWebSocket() {
             if (data.type === 'pwm_set') {
                 // Update slider to match the new PWM limit
                 // Reverse-calculate limit from min_pwm and max_pwm
-                const receivedMinPwm = data.min_pwm || 45;
-                const receivedMaxPwm = data.max_pwm || 100;
+                const receivedMinPwm = data.min_pwm_percent || 45;
+                const receivedMaxPwm = data.max_pwm_percent || 100;
 
                 // Calculate the limit percentage from max_pwm (assuming BASE_MAX_PWM = 100)
                 const calculatedLimit = Math.round((receivedMaxPwm / 100) * 100);
@@ -355,8 +355,8 @@ function updatePwmLimitDisplay() {
     // For forward: 1550-2000us maps to 45-100% PWM
 
     // Calculate effective min/max PWM percentages based on limit
-    // Base values: min=45%, max=100%
-    const BASE_MIN_PWM = 45;
+    // Base values: min=100%, max=100%
+    const BASE_MIN_PWM = 100;
     const BASE_MAX_PWM = 100;
 
     // Scale PWM values by limit percentage
@@ -364,11 +364,6 @@ function updatePwmLimitDisplay() {
     // At 100% limit: use base values
     let minPwm = Math.round(BASE_MIN_PWM * pwmLimit / 100);
     let maxPwm = Math.round(BASE_MAX_PWM * pwmLimit / 100);
-
-    // Ensure minimum is at least 20% when limit > 0, to overcome friction
-    if (pwmLimit > 0 && minPwm < 20) {
-        minPwm = 20;
-    }
 
     sendPwmSettings(minPwm, maxPwm);
 }
@@ -378,8 +373,8 @@ function sendPwmSettings(minPwm, maxPwm) {
         // Send PWM limits (which now also controls speed)
         motorWs.send(JSON.stringify({
             type: 'set_pwm',
-            min_pwm: minPwm,
-            max_pwm: maxPwm
+            min_pwm_percent: minPwm,
+            max_pwm_percent: maxPwm
         }));
 
         // Also send speed percent for navigation (0.0 to 1.0)

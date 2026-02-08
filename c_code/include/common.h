@@ -61,7 +61,7 @@ typedef struct {
     double target_y;
     double target_heading;  // For TURN state
     double target_distance; // For DRIVE state
-    double speed_percent;    // Navigation speed: 0.0 (0%) to 1.0 (100%)
+
     int is_bucket_target;   // 1 if navigating to a colored bucket
     double bucket_x;        // Actual bucket coordinates
     double bucket_y;

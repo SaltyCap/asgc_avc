@@ -145,16 +145,19 @@ def motor_socket(ws):
 
                     # Handle PWM settings (works in both modes)
                     if msg_type == 'set_pwm':
-                        min_pwm = data.get('min_pwm', 45)
-                        max_pwm = data.get('max_pwm', 80)
-                        min_pwm = max(20, min(100, int(min_pwm)))
-                        max_pwm = max(20, min(100, int(max_pwm)))
+                        min_pwm_percent = data.get('min_pwm_percent', 45)
+                        max_pwm_percent = data.get('max_pwm_percent', 80)
+                        
+                        # Validate range 0-100
+                        min_pwm_percent = max(0, min(100, int(min_pwm_percent)))
+                        max_pwm_percent = max(0, min(100, int(max_pwm_percent)))
+                        
                         # Send command to C program
-                        motor_interface.send_command(f"setpwm {min_pwm} {max_pwm}")
-                        print(f"PWM settings: Min={min_pwm}%, Max={max_pwm}%")
+                        motor_interface.send_command(f"setpwm {min_pwm_percent} {max_pwm_percent}")
+                        print(f"PWM settings: Min={min_pwm_percent}%, Max={max_pwm_percent}%")
 
                         # Broadcast to all connected motor control clients
-                        pwm_message = json.dumps({'type': 'pwm_set', 'min_pwm': min_pwm, 'max_pwm': max_pwm})
+                        pwm_message = json.dumps({'type': 'pwm_set', 'min_pwm_percent': min_pwm_percent, 'max_pwm_percent': max_pwm_percent})
                         for client in list(motor_clients):  # Use list() to avoid modification during iteration
                             try:
                                 client.send(pwm_message)

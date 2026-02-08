@@ -70,36 +70,18 @@ int pwm_init(void) {
 
 
 
-void set_motor_speed(int motor_id, int speed_percent, int immediate) {
-    (void)immediate; // No longer used since we removed ramping here
-    
-    if (speed_percent > 100) speed_percent = 100;
-    if (speed_percent < -100) speed_percent = -100;
-
-    // Convert target speed_percent to target_pulse_ns
-    int target_pulse_ns;
-    if (speed_percent > 0) {
-        // Map 0-100% to FORWARD_START_NS to FORWARD_MAX_NS
-        target_pulse_ns = FORWARD_START_NS + (speed_percent * (FORWARD_MAX_NS - FORWARD_START_NS)) / 100;
-    } else if (speed_percent < 0) {
-        // Map 0-(-100%) to REVERSE_START_NS to REVERSE_MAX_NS
-        target_pulse_ns = REVERSE_START_NS - (abs(speed_percent) * (REVERSE_START_NS - REVERSE_MAX_NS)) / 100;
-    } else {
-        target_pulse_ns = NEUTRAL_NS;
-    }
-
+void set_motor_pwm(int motor_id, int pulse_ns) {
     // Explicit Check: Clamp to absolute limits
-    if (target_pulse_ns > FORWARD_MAX_NS) target_pulse_ns = FORWARD_MAX_NS;
-    if (target_pulse_ns < REVERSE_MAX_NS) target_pulse_ns = REVERSE_MAX_NS;
+    if (pulse_ns > FORWARD_MAX_NS) pulse_ns = FORWARD_MAX_NS;
+    if (pulse_ns < REVERSE_MAX_NS) pulse_ns = REVERSE_MAX_NS;
 
-    // Apply immediately - ramping is now handled in main.c control loop
-    motors[motor_id].last_pulse_ns = target_pulse_ns;
-    motors[motor_id].current_speed = speed_percent;
+    motors[motor_id].last_pulse_ns = pulse_ns;
+    // We no longer track 'current_speed' as percentage since we use raw values
 
     // Write to PWM hardware
     if (motors[motor_id].pwm_duty_fd >= 0) {
         lseek(motors[motor_id].pwm_duty_fd, 0, SEEK_SET);
-        dprintf(motors[motor_id].pwm_duty_fd, "%d", target_pulse_ns);
+        dprintf(motors[motor_id].pwm_duty_fd, "%d", pulse_ns);
     }
 }
 
