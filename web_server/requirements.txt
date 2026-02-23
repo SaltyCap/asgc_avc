@@ -5,4 +5,4 @@ Flask==3.1.2
 flask-sock==0.7.0
 
 # Speech Recognition
-vosk==0.3.45
+vosk==0.3.44

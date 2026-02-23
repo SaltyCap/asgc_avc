@@ -6,6 +6,11 @@ __pycache__/
 venv/
 env/
 .env
+.env.*
+*.env
+*.env.*
+!.env.example
+!.env.template
 
 # Virtual environments (all locations)
 **/venv/
@@ -14,9 +19,13 @@ archive/.venv.old/
 
 # Vosk model (large files)
 web_server/model/
+web_server/.downloads/
 
 # SSL certificates (sensitive)
 *.pem
+
+# Local auth secrets
+web_server/.secrets/
 
 # Hotspot configuration (contains WiFi password)
 HOTSPOT_SETUP.md
@@ -49,3 +58,7 @@ logs/
 # Archive old files
 web_server/archive/
 c_code/asgc_motor_control
+
+# GSD
+.agent/
+.gsd/

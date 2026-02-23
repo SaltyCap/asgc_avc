@@ -13,44 +13,55 @@
         }
 
         body {
-            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            font-family: 'Inter', 'Outfit', 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
             min-height: 100vh;
-            background: linear-gradient(135deg, #1e3c72 0%, #2a5298 50%, #7e22ce 100%);
+            background: #0b0f19;
+            background-image: radial-gradient(circle at top right, rgba(168, 85, 247, 0.15) 0%, transparent 40%), radial-gradient(circle at bottom left, rgba(14, 165, 233, 0.15) 0%, transparent 40%);
             color: #fff;
             display: flex;
             flex-direction: column;
-            justify-content: center;
+            justify-content: flex-start;
             align-items: center;
-            padding: 20px;
+            padding: max(12px, env(safe-area-inset-top)) max(12px, env(safe-area-inset-right)) max(16px, env(safe-area-inset-bottom)) max(12px, env(safe-area-inset-left));
+            padding-bottom: max(88px, calc(16px + env(safe-area-inset-bottom)));
             -webkit-tap-highlight-color: transparent;
+            overflow-x: hidden;
+            gap: 14px;
         }
 
         .nav-buttons {
             display: flex;
             justify-content: center;
             gap: 20px;
-            margin: 30px 0 10px 0;
+            margin: 10px 0 10px 0;
+            width: 100%;
+            max-width: 560px;
         }
 
         .nav-button {
             display: flex;
             align-items: center;
             justify-content: center;
-            width: 140px;
-            height: 50px;
+            flex: 1;
+            min-width: 0;
+            min-height: 48px;
             border-radius: 25px;
-            border: none;
+            border: 1px solid rgba(255, 255, 255, 0.1);
             color: white;
             cursor: pointer;
             font-size: 1rem;
             font-weight: 600;
-            box-shadow: 0 4px 20px rgba(0, 0, 0, 0.3);
-            transition: all 0.3s ease;
+            box-shadow: 0 8px 20px rgba(0, 0, 0, 0.4);
+            transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
             text-decoration: none;
         }
 
+        .nav-button:hover {
+            transform: translateY(-2px) scale(1.02);
+        }
+
         .nav-button:active {
-            transform: scale(0.95);
+            transform: translateY(1px) scale(0.98);
         }
 
         .home-btn {
@@ -71,13 +82,15 @@
 
         .header {
             text-align: center;
-            margin-bottom: 40px;
+            width: 100%;
+            max-width: 560px;
+            margin: 52px 0 0;
         }
 
         .title {
-            font-size: 2rem;
+            font-size: clamp(1.5rem, 6.2vw, 2rem);
             font-weight: 700;
-            background: linear-gradient(135deg, #fff 0%, #a5b4fc 100%);
+            background: linear-gradient(135deg, #0ef 0%, #a855f7 100%);
             -webkit-background-clip: text;
             -webkit-text-fill-color: transparent;
             background-clip: text;
@@ -85,32 +98,34 @@
 
         .joystick-container {
             position: relative;
-            width: 300px;
-            height: 300px;
-            background: rgba(255, 255, 255, 0.1);
-            backdrop-filter: blur(10px);
+            width: min(86vw, 320px);
+            height: min(86vw, 320px);
+            background: rgba(255, 255, 255, 0.05);
+            backdrop-filter: blur(16px);
             border-radius: 50%;
-            border: 2px solid rgba(255, 255, 255, 0.3);
+            border: 1px solid rgba(255, 255, 255, 0.1);
+            box-shadow: 0 8px 32px rgba(0, 0, 0, 0.5), inset 0 0 0 1px rgba(255, 255, 255, 0.1);
             display: flex;
             align-items: center;
             justify-content: center;
-            margin: 20px 0;
+            margin: 0;
         }
 
         .joystick {
-            width: 100px;
-            height: 100px;
-            background: linear-gradient(135deg, #3b82f6 0%, #2563eb 100%);
+            width: clamp(84px, 24vw, 104px);
+            height: clamp(84px, 24vw, 104px);
+            background: linear-gradient(135deg, #0ef 0%, #3b82f6 100%);
             border-radius: 50%;
             cursor: move;
             position: absolute;
-            box-shadow: 0 4px 20px rgba(59, 130, 246, 0.5);
+            box-shadow: 0 4px 20px rgba(0, 238, 255, 0.5), inset 0 0 10px rgba(255, 255, 255, 0.5);
             touch-action: none;
-            transition: box-shadow 0.2s ease;
+            transition: box-shadow 0.2s cubic-bezier(0.4, 0, 0.2, 1), transform 0.1s;
         }
 
         .joystick:active {
-            box-shadow: 0 6px 30px rgba(59, 130, 246, 0.7);
+            box-shadow: 0 6px 30px rgba(0, 238, 255, 0.7), inset 0 0 15px rgba(255, 255, 255, 0.7);
+            transform: scale(0.95);
         }
 
         .crosshair {
@@ -131,17 +146,20 @@
         }
 
         .info-panel {
-            background: rgba(255, 255, 255, 0.1);
-            backdrop-filter: blur(10px);
-            border-radius: 16px;
-            padding: 20px 30px;
-            border: 1px solid rgba(255, 255, 255, 0.2);
-            margin-top: 30px;
+            background: rgba(255, 255, 255, 0.05);
+            backdrop-filter: blur(16px);
+            border-radius: 32px;
+            padding: clamp(16px, 4.5vw, 24px);
+            border: none;
+            box-shadow: 0 8px 32px rgba(0, 0, 0, 0.5), inset 0 0 0 1px rgba(255, 255, 255, 0.1);
+            margin-top: 2px;
             text-align: center;
+            width: 100%;
+            max-width: 560px;
         }
 
         .coordinates {
-            font-size: 1.2rem;
+            font-size: clamp(1rem, 4.5vw, 1.2rem);
             margin: 10px 0;
         }
 
@@ -152,7 +170,7 @@
         }
 
         .direction-indicator {
-            font-size: 1.5rem;
+            font-size: clamp(1.2rem, 5vw, 1.5rem);
             font-weight: 600;
             margin-top: 10px;
             color: #60a5fa;
@@ -163,23 +181,34 @@
             gap: 10px;
             margin-top: 20px;
             justify-content: center;
+            flex-wrap: wrap;
         }
 
         .control-button {
             padding: 12px 24px;
-            background: rgba(255, 255, 255, 0.2);
+            background: rgba(255, 255, 255, 0.1);
             backdrop-filter: blur(10px);
-            border: 1px solid rgba(255, 255, 255, 0.3);
-            border-radius: 12px;
+            border: 1px solid rgba(255, 255, 255, 0.2);
+            border-radius: 20px;
             color: white;
             font-weight: 600;
             cursor: pointer;
-            transition: all 0.3s ease;
+            box-shadow: 0 4px 15px rgba(0, 0, 0, 0.2);
+            transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+            text-transform: uppercase;
+            min-height: 46px;
+            flex: 1 1 170px;
         }
 
         .control-button:hover {
-            background: rgba(255, 255, 255, 0.3);
-            transform: scale(1.05);
+            background: rgba(255, 255, 255, 0.2);
+            transform: translateY(-2px) scale(1.02);
+            box-shadow: 0 8px 25px rgba(0, 0, 0, 0.3);
+        }
+
+        .control-button:active {
+            transform: translateY(1px) scale(0.98);
+            box-shadow: 0 4px 10px rgba(0, 0, 0, 0.2);
         }
 
         .control-button.stop-btn {
@@ -203,7 +232,7 @@
         .motor-speeds {
             display: flex;
             justify-content: center;
-            gap: 30px;
+            gap: clamp(14px, 6vw, 30px);
             margin: 15px 0;
         }
 
@@ -226,8 +255,8 @@
 
         .connection-status {
             position: fixed;
-            top: 20px;
-            right: 20px;
+            top: max(10px, env(safe-area-inset-top));
+            right: max(10px, env(safe-area-inset-right));
             padding: 8px 16px;
             background: rgba(0, 0, 0, 0.5);
             backdrop-filter: blur(10px);
@@ -247,7 +276,21 @@
         }
 
         .status-dot.connected {
-            background: #22c55e;
+            background: #0ef;
+            box-shadow: 0 0 10px #0ef;
+            animation: pulse-connected 2s infinite;
+        }
+
+        @keyframes pulse-connected {
+
+            0%,
+            100% {
+                box-shadow: 0 0 10px rgba(0, 238, 255, 0.5);
+            }
+
+            50% {
+                box-shadow: 0 0 20px #0ef;
+            }
         }
 
         .slider-container {
@@ -288,27 +331,30 @@
         .pwm-slider::-webkit-slider-thumb {
             -webkit-appearance: none;
             appearance: none;
-            width: 24px;
-            height: 24px;
+            width: 28px;
+            height: 28px;
             border-radius: 50%;
-            background: linear-gradient(135deg, #3b82f6 0%, #2563eb 100%);
+            background: #0ef;
             cursor: pointer;
-            box-shadow: 0 2px 10px rgba(59, 130, 246, 0.5);
-            transition: transform 0.2s ease;
+            box-shadow: 0 0 15px rgba(0, 238, 255, 0.8), inset 0 0 5px rgba(255, 255, 255, 0.8);
+            transition: transform 0.2s cubic-bezier(0.4, 0, 0.2, 1), box-shadow 0.2s cubic-bezier(0.4, 0, 0.2, 1);
+            border: 2px solid #fff;
         }
 
         .pwm-slider::-webkit-slider-thumb:hover {
-            transform: scale(1.1);
+            transform: scale(1.15);
+            box-shadow: 0 0 25px rgba(0, 238, 255, 1), inset 0 0 5px rgba(255, 255, 255, 1);
         }
 
         .pwm-slider::-moz-range-thumb {
-            width: 24px;
-            height: 24px;
+            width: 28px;
+            height: 28px;
             border-radius: 50%;
-            background: linear-gradient(135deg, #3b82f6 0%, #2563eb 100%);
+            background: #0ef;
             cursor: pointer;
-            border: none;
-            box-shadow: 0 2px 10px rgba(59, 130, 246, 0.5);
+            box-shadow: 0 0 15px rgba(0, 238, 255, 0.8), inset 0 0 5px rgba(255, 255, 255, 0.8);
+            transition: transform 0.2s cubic-bezier(0.4, 0, 0.2, 1), box-shadow 0.2s cubic-bezier(0.4, 0, 0.2, 1);
+            border: 2px solid #fff;
         }
 
         .pulse-width-info {
@@ -323,6 +369,88 @@
 
         .pulse-width-info strong {
             color: #60a5fa;
+        }
+
+        .floating-shutdown-btn {
+            position: fixed;
+            right: max(12px, env(safe-area-inset-right));
+            bottom: max(12px, env(safe-area-inset-bottom));
+            min-height: 48px;
+            min-width: 132px;
+            padding: 10px 16px;
+            border-radius: 24px;
+            border: 1px solid rgba(249, 115, 22, 0.75);
+            background: linear-gradient(135deg, #f97316 0%, #ea580c 100%);
+            color: #fff;
+            font-size: 0.92rem;
+            font-weight: 700;
+            letter-spacing: 0.02em;
+            cursor: pointer;
+            box-shadow: 0 10px 24px rgba(234, 88, 12, 0.35);
+            z-index: 1200;
+            transition: transform 0.2s ease, box-shadow 0.2s ease;
+        }
+
+        .floating-shutdown-btn:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 12px 26px rgba(234, 88, 12, 0.5);
+        }
+
+        .floating-shutdown-btn:active {
+            transform: translateY(1px) scale(0.98);
+        }
+
+        @media (max-width: 680px) {
+            .header {
+                margin-top: 44px;
+            }
+
+            .connection-status {
+                padding: 6px 10px;
+                font-size: 0.78rem;
+            }
+
+            .slider-container {
+                margin: 14px 0 6px;
+                padding: 12px;
+            }
+
+            .pulse-width-info {
+                flex-wrap: wrap;
+                gap: 6px 12px;
+                justify-content: flex-start;
+            }
+
+            .nav-buttons {
+                gap: 10px;
+            }
+        }
+
+        @media (max-width: 430px) {
+            .motor-speeds {
+                flex-direction: column;
+                gap: 8px;
+            }
+
+            .control-buttons {
+                flex-direction: column;
+            }
+
+            .control-button {
+                width: 100%;
+                flex: 1 1 auto;
+            }
+
+            .nav-buttons {
+                flex-direction: column;
+            }
+
+            .floating-shutdown-btn {
+                min-height: 46px;
+                min-width: 112px;
+                padding: 8px 14px;
+                font-size: 0.84rem;
+            }
         }
     </style>
 </head>
@@ -376,7 +504,6 @@
 
         <div class="control-buttons">
             <button class="control-button stop-btn" onclick="emergencyStop()">🛑 STOP</button>
-            <button class="control-button shutdown-btn" onclick="shutdownSystem()">🔌 Shutdown</button>
         </div>
     </div>
 
@@ -385,9 +512,12 @@
         <a href="/course" class="nav-button course-btn">🗺️ Course</a>
     </div>
 
+    <button id="shutdownButton" class="floating-shutdown-btn">🔌 Shutdown</button>
+
     <script>
         const joystick = document.getElementById('joystick');
         const container = document.getElementById('joystickContainer');
+        const shutdownButton = document.getElementById('shutdownButton');
         const xValue = document.getElementById('xValue');
         const yValue = document.getElementById('yValue');
         const direction = document.getElementById('direction');
@@ -533,6 +663,8 @@
             if (confirm('Are you sure you want to shutdown the system? This will save logs and stop the program.')) {
                 // Stop motors first
                 emergencyStop();
+                shutdownButton.disabled = true;
+                shutdownButton.textContent = '⏳ Shutting...';
 
                 // Call shutdown API
                 fetch('/api/shutdown', {
@@ -549,6 +681,8 @@
                     })
                     .catch(error => {
                         console.error('Shutdown error:', error);
+                        shutdownButton.disabled = false;
+                        shutdownButton.textContent = '🔌 Shutdown';
                         alert('Error initiating shutdown. Please try again.');
                     });
             }
@@ -558,7 +692,8 @@
             const rect = container.getBoundingClientRect();
             centerX = rect.width / 2;
             centerY = rect.height / 2;
-            maxDistance = (rect.width / 2) - 50; // Container radius - joystick radius
+            const joystickRadius = joystick.offsetWidth / 2;
+            maxDistance = Math.max(30, (rect.width / 2) - joystickRadius);
         }
 
         function getDirection(x, y) {
@@ -748,6 +883,7 @@
 
         // Initialize
         updateCenter();
+        shutdownButton.addEventListener('click', shutdownSystem);
         window.addEventListener('resize', updateCenter);
     </script>
 </body>

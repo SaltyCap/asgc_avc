@@ -6,25 +6,65 @@ Features:
 - Tabbed interface for multiple logs
 - File selection dialog for CSV logs
 - Multi-panel interactive plots
-- Auto-scaling for all data
+- Downsampled rendering for large logs
+- Timing diagnostics (dt trend + histogram)
 - Zoom, pan, and legend controls
-- Color-coded navigation states
+- Safe move-to-trash file management
 """
 
-import pandas as pd
-import matplotlib.pyplot as plt
-from matplotlib.widgets import Button
-from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg, NavigationToolbar2Tk
-import tkinter as tk
-from tkinter import filedialog, ttk, messagebox
-import sys
 import os
+import shutil
+import tkinter as tk
+from tkinter import ttk, messagebox
+
+import matplotlib.pyplot as plt
+import numpy as np
+import pandas as pd
+from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg, NavigationToolbar2Tk
 
 class LogTab:
     """Represents a single log file's plots"""
+    REQUIRED_COLUMNS = {
+        'time',
+        'mode',
+        'pwm_l',
+        'i2c_l',
+        'pwm_r',
+        'i2c_r',
+        'target_l',
+        'actual_l',
+        'target_r',
+        'actual_r',
+        'gyro_z',
+        'odom_x',
+        'odom_y',
+        'odom_heading',
+        'nav_state',
+    }
+
+    NUMERIC_COLUMNS = [
+        'time',
+        'pwm_l',
+        'i2c_l',
+        'pwm_r',
+        'i2c_r',
+        'target_l',
+        'actual_l',
+        'target_r',
+        'actual_r',
+        'gyro_z',
+        'odom_x',
+        'odom_y',
+        'odom_heading',
+    ]
+
     def __init__(self, filename, parent_frame):
         self.filename = filename
         self.data = None
+        self.plot_data = None
+        self.state_segments = []
+        self.state_durations = {}
+        self.loaded = False
         self.fig = None
         self.canvas = None
         self.toolbar = None
@@ -32,212 +72,369 @@ class LogTab:
         
         # Load and create plots
         if self.load_data():
-            self.create_plots()
+            self.loaded = self.create_plots()
     
     def load_data(self):
         """Load and parse CSV log file"""
         try:
-            self.data = pd.read_csv(self.filename)
-            print(f"Loaded {len(self.data)} data points from {os.path.basename(self.filename)}")
-            return True
+            data = pd.read_csv(self.filename)
         except Exception as e:
-            print(f"Error loading file: {e}")
+            messagebox.showerror("Load Error", f"Failed to load {os.path.basename(self.filename)}:\n{e}")
             return False
-    
+        if data.empty:
+            messagebox.showwarning("Empty Log", f"{os.path.basename(self.filename)} contains no rows.")
+            return False
+
+        missing = sorted(self.REQUIRED_COLUMNS - set(data.columns))
+        if missing:
+            messagebox.showerror(
+                "Schema Error",
+                f"{os.path.basename(self.filename)} is missing required columns:\n"
+                + ", ".join(missing),
+            )
+            return False
+
+        for col in self.NUMERIC_COLUMNS:
+            data[col] = pd.to_numeric(data[col], errors='coerce')
+
+        before_drop = len(data)
+        data = data.dropna(subset=self.NUMERIC_COLUMNS).reset_index(drop=True)
+        dropped = before_drop - len(data)
+        if dropped > 0:
+            print(f"Dropped {dropped} invalid numeric rows from {os.path.basename(self.filename)}")
+        if data.empty:
+            messagebox.showerror("Schema Error", f"{os.path.basename(self.filename)} has no valid numeric rows.")
+            return False
+
+        data['mode'] = data['mode'].astype(str)
+        data['nav_state'] = data['nav_state'].astype(str)
+        data = data.sort_values('time').reset_index(drop=True)
+
+        self.data = data
+        self.plot_data = self._downsample_data(self.data)
+        self.state_segments = self._compute_state_segments(self.data)
+        self.state_durations = self._compute_state_durations(self.state_segments)
+
+        print(
+            f"Loaded {len(self.data)} points from {os.path.basename(self.filename)} "
+            f"(plotting {len(self.plot_data)} points)"
+        )
+        return True
+
+    def _downsample_data(self, data, max_points=20000):
+        if data is None or len(data) <= max_points:
+            return data
+        step = max(1, len(data) // max_points)
+        sampled = data.iloc[::step].copy()
+        if sampled.index[-1] != data.index[-1]:
+            sampled = pd.concat([sampled, data.iloc[[-1]]])
+        return sampled.reset_index(drop=True)
+
+    def _compute_state_segments(self, data):
+        if data is None or data.empty or 'nav_state' not in data.columns:
+            return []
+        states = data['nav_state'].to_numpy()
+        times = data['time'].to_numpy()
+        segments = []
+        start_idx = 0
+        current_state = states[0]
+        for i in range(1, len(states)):
+            if states[i] != current_state:
+                segments.append((times[start_idx], times[i - 1], current_state))
+                start_idx = i
+                current_state = states[i]
+        segments.append((times[start_idx], times[-1], current_state))
+        return segments
+
+    def _compute_state_durations(self, segments):
+        durations = {}
+        for start_t, end_t, state in segments:
+            duration = max(0.0, end_t - start_t)
+            durations[state] = durations.get(state, 0.0) + duration
+        return durations
+
+    def _compute_heading_rate(self, data):
+        if data is None or len(data) < 3:
+            return None
+        times = data['time'].to_numpy()
+        headings_deg = data['odom_heading'].to_numpy()
+        if np.any(np.diff(times) <= 0):
+            return None
+        headings_rad = np.deg2rad(headings_deg)
+        unwrapped_deg = np.rad2deg(np.unwrap(headings_rad))
+        return np.gradient(unwrapped_deg, times)
+
+    def _compute_sample_intervals(self, data):
+        if data is None or len(data) < 2:
+            return np.array([]), np.array([])
+        times = data['time'].to_numpy()
+        dt = np.diff(times)
+        return times[1:], dt
+
     def create_plots(self):
         """Create interactive multi-panel plots"""
-        if self.data is None:
-            return
-        
-        # Create figure with subplots
-        self.fig, axes = plt.subplots(4, 2, figsize=(14, 10))
-        self.fig.suptitle(f'{os.path.basename(self.filename)}', fontsize=12, fontweight='bold')
-        
-        # Color map for navigation states
+        if self.data is None or self.plot_data is None:
+            return False
+
+        data = self.plot_data
+        self.fig, axes = plt.subplots(5, 2, figsize=(15, 12))
+        self.fig.suptitle(os.path.basename(self.filename), fontsize=12, fontweight='bold')
+
         state_colors = {
             'IDLE': 'lightgray',
             'TURNING': 'yellow',
             'DRIVING': 'lightgreen',
             'GOTO': 'lightblue',
-            'BUCKET_APPROACH': 'lightyellow',
-            'BUCKET_ROTATE': 'lightcoral',
-            'BUCKET_BACKUP': 'lightpink'
+            'BUCKET_APPROACH': 'khaki',
+            'BUCKET_ROTATE': 'salmon',
+            'BUCKET_BACKUP': 'lightpink',
+            'UNKNOWN': 'whitesmoke',
         }
-        
-        # Add background shading for navigation states
-        for ax_row in axes:
-            for ax in ax_row:
-                self._add_state_background(ax, state_colors)
-        
+
+        time_axes = [
+            axes[0, 0], axes[0, 1],
+            axes[1, 0], axes[1, 1],
+            axes[2, 0], axes[2, 1],
+            axes[3, 0], axes[4, 0],
+        ]
+        for ax in time_axes:
+            self._add_state_background(ax, state_colors, self.state_segments)
+
         # Plot 1: PWM Commands
         ax = axes[0, 0]
-        ax.plot(self.data['time'], self.data['pwm_l'], 'b-', label='Left PWM', linewidth=1)
-        ax.plot(self.data['time'], self.data['pwm_r'], 'r-', label='Right PWM', linewidth=1)
+        ax.plot(data['time'], data['pwm_l'], 'b-', label='Left PWM', linewidth=1)
+        ax.plot(data['time'], data['pwm_r'], 'r-', label='Right PWM', linewidth=1)
         ax.set_ylabel('PWM (ns)', fontsize=9)
         ax.set_title('Motor PWM Commands', fontsize=10)
         ax.legend(loc='upper right', fontsize=8)
         ax.grid(True, alpha=0.3)
         ax.tick_params(labelsize=8)
-        
+
         # Plot 2: Encoder Raw Angles
         ax = axes[0, 1]
-        ax.plot(self.data['time'], self.data['i2c_l'], 'b-', label='Left Raw', linewidth=1)
-        ax.plot(self.data['time'], self.data['i2c_r'], 'r-', label='Right Raw', linewidth=1)
+        ax.plot(data['time'], data['i2c_l'], 'b-', label='Left Raw', linewidth=1)
+        ax.plot(data['time'], data['i2c_r'], 'r-', label='Right Raw', linewidth=1)
         ax.set_ylabel('Raw Angle (0-4095)', fontsize=9)
-        ax.set_title('Encoder Raw Angles (I2C)', fontsize=10)
+        ax.set_title('Encoder Raw Angles', fontsize=10)
         ax.legend(loc='upper right', fontsize=8)
         ax.grid(True, alpha=0.3)
         ax.tick_params(labelsize=8)
-        
-        # Plot 3: Encoder Targets vs Actuals (Left)
+
+        # Plot 3: Left target/actual/error
         ax = axes[1, 0]
-        ax.plot(self.data['time'], self.data['target_l'], 'b--', label='Target', linewidth=1.5)
-        ax.plot(self.data['time'], self.data['actual_l'], 'b-', label='Actual', linewidth=1)
+        left_error = data['target_l'] - data['actual_l']
+        ax.plot(data['time'], data['target_l'], 'b--', label='Target', linewidth=1.3)
+        ax.plot(data['time'], data['actual_l'], 'b-', label='Actual', linewidth=1)
+        ax.plot(data['time'], left_error, color='navy', linestyle=':', linewidth=1, alpha=0.45, label='Error')
         ax.set_ylabel('Counts', fontsize=9)
-        ax.set_title('Left Motor: Target vs Actual', fontsize=10)
+        ax.set_title('Left Encoder: Target vs Actual', fontsize=10)
         ax.legend(loc='upper right', fontsize=8)
         ax.grid(True, alpha=0.3)
         ax.tick_params(labelsize=8)
-        
-        # Plot 4: Encoder Targets vs Actuals (Right)
+
+        # Plot 4: Right target/actual/error
         ax = axes[1, 1]
-        ax.plot(self.data['time'], self.data['target_r'], 'r--', label='Target', linewidth=1.5)
-        ax.plot(self.data['time'], self.data['actual_r'], 'r-', label='Actual', linewidth=1)
+        right_error = data['target_r'] - data['actual_r']
+        ax.plot(data['time'], data['target_r'], 'r--', label='Target', linewidth=1.3)
+        ax.plot(data['time'], data['actual_r'], 'r-', label='Actual', linewidth=1)
+        ax.plot(data['time'], right_error, color='darkred', linestyle=':', linewidth=1, alpha=0.45, label='Error')
         ax.set_ylabel('Counts', fontsize=9)
-        ax.set_title('Right Motor: Target vs Actual', fontsize=10)
+        ax.set_title('Right Encoder: Target vs Actual', fontsize=10)
         ax.legend(loc='upper right', fontsize=8)
         ax.grid(True, alpha=0.3)
         ax.tick_params(labelsize=8)
-        
-        # Plot 5: Gyro Z-axis (MPU6050)
+
+        # Plot 5: Gyro Z with derived heading rate overlay
         ax = axes[2, 0]
-        ax.plot(self.data['time'], self.data['gyro_z'], 'g-', label='Gyro Z', linewidth=1)
+        heading_rate = self._compute_heading_rate(data)
+        ax.plot(data['time'], data['gyro_z'], 'g-', label='Gyro Z', linewidth=1)
+        if heading_rate is not None:
+            ax.plot(data['time'], heading_rate, color='purple', linestyle='--', linewidth=1, alpha=0.8, label='dHeading/dt')
         ax.axhline(y=0, color='k', linestyle='--', alpha=0.3)
-        ax.set_ylabel('Angular Rate (deg/s)', fontsize=9)
-        ax.set_title('MPU6050 Gyro Z-axis', fontsize=10)
+        ax.set_ylabel('Rate (deg/s)', fontsize=9)
+        ax.set_title('Gyro vs Derived Heading Rate', fontsize=10)
         ax.legend(loc='upper right', fontsize=8)
         ax.grid(True, alpha=0.3)
         ax.tick_params(labelsize=8)
-        
-        # Plot 6: Odometry Heading
+
+        # Plot 6: Heading (wrapped + unwrapped)
         ax = axes[2, 1]
-        ax.plot(self.data['time'], self.data['odom_heading'], 'm-', label='Heading (Fused)', linewidth=1.5)
-        ax.set_ylabel('Heading (degrees)', fontsize=9)
-        ax.set_title('Robot Heading (Kalman Filtered)', fontsize=10)
+        wrapped = data['odom_heading'].to_numpy()
+        unwrapped = np.rad2deg(np.unwrap(np.deg2rad(wrapped)))
+        ax.plot(data['time'], wrapped, 'm-', label='Heading (0-360)', linewidth=1.2)
+        ax.plot(data['time'], unwrapped, color='gray', linestyle='--', linewidth=1, alpha=0.8, label='Heading Unwrapped')
+        ax.set_ylabel('Heading (deg)', fontsize=9)
+        ax.set_title('Robot Heading', fontsize=10)
         ax.legend(loc='upper right', fontsize=8)
         ax.grid(True, alpha=0.3)
         ax.tick_params(labelsize=8)
-        
-        # Plot 7: Odometry Position (X, Y)
+
+        # Plot 7: Position over time
         ax = axes[3, 0]
-        ax.plot(self.data['time'], self.data['odom_x'], 'c-', label='X Position', linewidth=1.5)
-        ax.plot(self.data['time'], self.data['odom_y'], 'orange', label='Y Position', linewidth=1.5)
-        ax.set_ylabel('Position (feet)', fontsize=9)
-        ax.set_xlabel('Time (seconds)', fontsize=9)
-        ax.set_title('Robot Position (Odometry)', fontsize=10)
+        ax.plot(data['time'], data['odom_x'], 'c-', label='X Position', linewidth=1.2)
+        ax.plot(data['time'], data['odom_y'], color='orange', label='Y Position', linewidth=1.2)
+        ax.set_ylabel('Position (ft)', fontsize=9)
+        ax.set_xlabel('Time (s)', fontsize=9)
+        ax.set_title('Odometry Position', fontsize=10)
         ax.legend(loc='upper right', fontsize=8)
         ax.grid(True, alpha=0.3)
         ax.tick_params(labelsize=8)
-        
-        # Plot 8: 2D Path Visualization
-        ax = axes[3, 1]
-        
-        # Draw arena boundaries (30x30 feet)
+
+        # Plot 8: 2D path
+        self._plot_path_by_state(axes[3, 1], data, state_colors)
+
+        # Plot 9 + 10: timing diagnostics
+        self._plot_timing_diagnostics(axes[4, 0], axes[4, 1])
+
+        self.fig.tight_layout(rect=[0, 0, 1, 0.96])
+
+        self.canvas = FigureCanvasTkAgg(self.fig, master=self.parent_frame)
+        self.canvas.draw()
+        self.canvas.get_tk_widget().pack(fill=tk.BOTH, expand=True)
+
+        toolbar_frame = ttk.Frame(self.parent_frame)
+        toolbar_frame.pack(fill=tk.X)
+        self.toolbar = NavigationToolbar2Tk(self.canvas, toolbar_frame)
+        self.toolbar.update()
+        return True
+
+    def _plot_path_by_state(self, ax, data, state_colors):
         arena_width = 30
         arena_height = 30
-        ax.plot([0, arena_width, arena_width, 0, 0], 
-                [0, 0, arena_height, arena_height, 0], 
-                'k-', linewidth=2, label='Arena', zorder=1)
-        
-        # Mark bucket locations
+        ax.plot(
+            [0, arena_width, arena_width, 0, 0],
+            [0, 0, arena_height, arena_height, 0],
+            'k-',
+            linewidth=1.8,
+            label='Arena',
+            zorder=1,
+        )
+
         buckets = {
             'Red': (0, 0),
             'Yellow': (0, 30),
             'Blue': (30, 30),
-            'Green': (30, 0)
+            'Green': (30, 0),
         }
         bucket_colors = {
             'Red': 'red',
             'Yellow': 'gold',
             'Blue': 'blue',
-            'Green': 'green'
+            'Green': 'green',
         }
-        
         for name, (x, y) in buckets.items():
-            ax.plot(x, y, 'o', color=bucket_colors[name], markersize=10, 
-                   markeredgecolor='black', markeredgewidth=1.5, 
-                   label=name, zorder=3)
-        
-        # Mark center
-        ax.plot(15, 15, 'x', color='purple', markersize=8, 
-               markeredgewidth=2, label='Center', zorder=3)
-        
-        # Color code path by navigation state
-        for state, color in state_colors.items():
-            mask = self.data['nav_state'] == state
-            if mask.any():
-                ax.plot(self.data.loc[mask, 'odom_x'], 
-                       self.data.loc[mask, 'odom_y'], 
-                       'o', color=color, markersize=2, label=state, alpha=0.6, zorder=2)
-        
-        # Add start and end markers
-        ax.plot(self.data['odom_x'].iloc[0], self.data['odom_y'].iloc[0], 
-               'go', markersize=8, label='Start', markeredgecolor='black', 
-               markeredgewidth=1.5, zorder=4)
-        ax.plot(self.data['odom_x'].iloc[-1], self.data['odom_y'].iloc[-1], 
-               'rs', markersize=8, label='End', markeredgecolor='black', 
-               markeredgewidth=1.5, zorder=4)
-        
-        ax.set_xlabel('X Position (feet)', fontsize=9)
-        ax.set_ylabel('Y Position (feet)', fontsize=9)
-        ax.set_title('Robot Path (Top-Down View)', fontsize=10)
+            ax.plot(
+                x,
+                y,
+                'o',
+                color=bucket_colors[name],
+                markersize=8,
+                markeredgecolor='black',
+                markeredgewidth=1.2,
+                label=name,
+                zorder=3,
+            )
+
+        ax.plot(15, 15, 'x', color='purple', markersize=8, markeredgewidth=2, label='Center', zorder=3)
+
+        states = data['nav_state'].to_numpy()
+        xs = data['odom_x'].to_numpy()
+        ys = data['odom_y'].to_numpy()
+
+        label_used = set()
+        start_idx = 0
+        for i in range(1, len(states) + 1):
+            state_changed = (i == len(states)) or (states[i] != states[start_idx])
+            if not state_changed:
+                continue
+            state = states[start_idx]
+            color = state_colors.get(state, 'gray')
+            label = None
+            if state not in label_used:
+                duration = self.state_durations.get(state, 0.0)
+                label = f"{state} ({duration:.1f}s)"
+                label_used.add(state)
+            ax.plot(xs[start_idx:i], ys[start_idx:i], color=color, linewidth=1.3, alpha=0.9, label=label, zorder=2)
+            start_idx = i
+
+        ax.plot(xs[0], ys[0], 'go', markersize=8, label='Start', markeredgecolor='black', markeredgewidth=1.2, zorder=4)
+        ax.plot(xs[-1], ys[-1], 'rs', markersize=8, label='End', markeredgecolor='black', markeredgewidth=1.2, zorder=4)
+
+        ax.set_xlabel('X Position (ft)', fontsize=9)
+        ax.set_ylabel('Y Position (ft)', fontsize=9)
+        ax.set_title('Robot Path (State-colored)', fontsize=10)
         ax.legend(loc='center left', bbox_to_anchor=(1, 0.5), fontsize=7, ncol=1)
         ax.grid(True, alpha=0.3)
         ax.tick_params(labelsize=8)
-        
-        # Set fixed arena limits
         ax.set_xlim(-2, 32)
         ax.set_ylim(-2, 32)
         ax.set_aspect('equal')
-        
-        # Adjust layout
-        self.fig.tight_layout(rect=[0, 0, 1, 0.96])
-        
-        # Create canvas
-        self.canvas = FigureCanvasTkAgg(self.fig, master=self.parent_frame)
-        self.canvas.draw()
-        self.canvas.get_tk_widget().pack(fill=tk.BOTH, expand=True)
-        
-        # Add toolbar
-        toolbar_frame = ttk.Frame(self.parent_frame)
-        toolbar_frame.pack(fill=tk.X)
-        self.toolbar = NavigationToolbar2Tk(self.canvas, toolbar_frame)
-        self.toolbar.update()
-    
-    def _add_state_background(self, ax, state_colors):
-        """Add background shading for navigation states"""
-        if self.data is None or 'nav_state' not in self.data.columns:
+
+    def _plot_timing_diagnostics(self, ax_dt, ax_hist):
+        times, dt = self._compute_sample_intervals(self.data)
+        if len(dt) == 0:
+            ax_dt.set_title('Sample Interval Over Time', fontsize=10)
+            ax_dt.text(0.5, 0.5, 'Insufficient samples', ha='center', va='center', transform=ax_dt.transAxes)
+            ax_hist.set_title('Sample Interval Histogram', fontsize=10)
+            ax_hist.text(0.5, 0.5, 'Insufficient samples', ha='center', va='center', transform=ax_hist.transAxes)
             return
-        
-        # Get state transitions
-        states = self.data['nav_state'].values
-        times = self.data['time'].values
-        
-        current_state = states[0]
-        start_time = times[0]
-        
-        for i in range(1, len(states)):
-            if states[i] != current_state:
-                # State changed, draw background
-                color = state_colors.get(current_state, 'white')
-                ax.axvspan(start_time, times[i-1], alpha=0.15, color=color, zorder=0)
-                
-                current_state = states[i]
-                start_time = times[i]
-        
-        # Draw final state
-        color = state_colors.get(current_state, 'white')
-        ax.axvspan(start_time, times[-1], alpha=0.15, color=color, zorder=0)
+
+        dt_ms = dt * 1000.0
+        stride = max(1, len(dt_ms) // 25000)
+        dt_ms_ds = dt_ms[::stride]
+        time_ds = times[::stride]
+
+        median_dt = float(np.median(dt))
+        mean_dt = float(np.mean(dt))
+        std_dt_ms = float(np.std(dt_ms))
+        effective_hz = (1.0 / median_dt) if median_dt > 0 else 0.0
+        non_positive = int(np.sum(dt <= 0))
+        gap_count = int(np.sum(dt > (3.0 * median_dt))) if median_dt > 0 else 0
+
+        ax_dt.plot(time_ds, dt_ms_ds, color='teal', linewidth=1, label='dt')
+        ax_dt.axhline(median_dt * 1000.0, color='black', linestyle='--', linewidth=1, alpha=0.6, label='Median dt')
+        ax_dt.set_ylabel('dt (ms)', fontsize=9)
+        ax_dt.set_xlabel('Time (s)', fontsize=9)
+        ax_dt.set_title('Sample Interval Over Time', fontsize=10)
+        ax_dt.legend(loc='upper right', fontsize=8)
+        ax_dt.grid(True, alpha=0.3)
+        ax_dt.tick_params(labelsize=8)
+
+        bins = min(120, max(20, int(np.sqrt(len(dt_ms)))))
+        ax_hist.hist(dt_ms, bins=bins, color='slateblue', alpha=0.8)
+        ax_hist.set_xlabel('dt (ms)', fontsize=9)
+        ax_hist.set_ylabel('Count', fontsize=9)
+        ax_hist.set_title('Sample Interval Histogram', fontsize=10)
+        ax_hist.grid(True, alpha=0.2)
+        ax_hist.tick_params(labelsize=8)
+
+        diagnostics = (
+            f"Rows: {len(self.data):,}\n"
+            f"Median dt: {median_dt * 1000.0:.3f} ms\n"
+            f"Mean dt: {mean_dt * 1000.0:.3f} ms\n"
+            f"Effective rate: {effective_hz:.2f} Hz\n"
+            f"Jitter (std): {std_dt_ms:.3f} ms\n"
+            f"Non-monotonic dt<=0: {non_positive}\n"
+            f"Gaps (>3x median): {gap_count}"
+        )
+        ax_hist.text(
+            0.98,
+            0.98,
+            diagnostics,
+            transform=ax_hist.transAxes,
+            fontsize=8,
+            ha='right',
+            va='top',
+            bbox={'facecolor': 'white', 'alpha': 0.85, 'edgecolor': 'gray'},
+        )
+
+    def _add_state_background(self, ax, state_colors, state_segments):
+        """Add background shading for navigation states"""
+        if not state_segments:
+            return
+        for start_time, end_time, state in state_segments:
+            color = state_colors.get(state, 'white')
+            ax.axvspan(start_time, end_time, alpha=0.12, color=color, zorder=0)
     
     def destroy(self):
         """Clean up resources"""
@@ -251,397 +448,342 @@ class TabbedLogViewer:
         self.root = tk.Tk()
         self.root.title("ASGC Log Viewer")
         self.root.geometry("1400x900")
-        
+
         # Create menu bar
         menubar = tk.Menu(self.root)
         self.root.config(menu=menubar)
-        
+
         # File menu
         file_menu = tk.Menu(menubar, tearoff=0)
         menubar.add_cascade(label="File", menu=file_menu)
         file_menu.add_command(label="Open Log(s)...", command=self.add_tab, accelerator="Ctrl+O")
         file_menu.add_separator()
         file_menu.add_command(label="Exit", command=self.root.quit, accelerator="Ctrl+Q")
-        
+
         # Tab menu
         tab_menu = tk.Menu(menubar, tearoff=0)
         menubar.add_cascade(label="Tab", menu=tab_menu)
         tab_menu.add_command(label="Close Tab", command=self.close_current_tab, accelerator="Ctrl+W")
-        tab_menu.add_command(label="Delete Tab (and file)", command=self.delete_current_tab, accelerator="Ctrl+D")
+        tab_menu.add_command(label="Move Tab File to Trash", command=self.delete_current_tab, accelerator="Ctrl+D")
         tab_menu.add_command(label="Refresh Tab", command=self.refresh_current_tab, accelerator="Ctrl+R")
-        
+
         # Bind keyboard shortcuts
         self.root.bind('<Control-o>', lambda e: self.add_tab())
         self.root.bind('<Control-w>', lambda e: self.close_current_tab())
         self.root.bind('<Control-d>', lambda e: self.delete_current_tab())
         self.root.bind('<Control-r>', lambda e: self.refresh_current_tab())
         self.root.bind('<Control-q>', lambda e: self.root.quit())
-        
+
         # Create notebook (tabbed interface)
         self.notebook = ttk.Notebook(self.root)
         self.notebook.pack(fill=tk.BOTH, expand=True, padx=5, pady=5)
-        
-        # Store tabs
+
+        # Tab registry keyed by notebook tab id.
         self.tabs = {}
-        
+        self.path_to_tab = {}
+
         # Create button frame
         button_frame = ttk.Frame(self.root)
         button_frame.pack(fill=tk.X, padx=5, pady=5)
-        
-        # Add buttons
-        ttk.Button(button_frame, text="➕ Open Log", command=self.add_tab).pack(side=tk.LEFT, padx=5)
-        ttk.Button(button_frame, text="✖ Close Tab", command=self.close_current_tab).pack(side=tk.LEFT, padx=5)
-        ttk.Button(button_frame, text="�️ Delete Tab", command=self.delete_current_tab).pack(side=tk.LEFT, padx=5)
-        ttk.Button(button_frame, text="�🔄 Refresh", command=self.refresh_current_tab).pack(side=tk.LEFT, padx=5)
-        
-        # Status label
+
+        ttk.Button(button_frame, text="Open Log", command=self.add_tab).pack(side=tk.LEFT, padx=5)
+        ttk.Button(button_frame, text="Close Tab", command=self.close_current_tab).pack(side=tk.LEFT, padx=5)
+        ttk.Button(button_frame, text="Move to Trash", command=self.delete_current_tab).pack(side=tk.LEFT, padx=5)
+        ttk.Button(button_frame, text="Refresh", command=self.refresh_current_tab).pack(side=tk.LEFT, padx=5)
+
         self.status_label = ttk.Label(button_frame, text="No logs open", foreground="gray")
         self.status_label.pack(side=tk.RIGHT, padx=10)
-        
+
         # Default log directory
         tools_dir = os.path.dirname(os.path.abspath(__file__))
         self.log_dir = os.path.abspath(os.path.join(tools_dir, "../logs"))
-    
+        self.trash_dir = os.path.join(self.log_dir, ".trash")
+
+    def _normalize_path(self, path):
+        return os.path.abspath(os.path.expanduser(path))
+
+    def _list_csv_files(self):
+        if not os.path.isdir(self.log_dir):
+            return []
+        csv_files = [f for f in os.listdir(self.log_dir) if f.lower().endswith('.csv')]
+        csv_files.sort(key=lambda x: os.path.getmtime(os.path.join(self.log_dir, x)), reverse=True)
+        return csv_files
+
+    def _move_to_trash(self, filepath):
+        path = self._normalize_path(filepath)
+        if not os.path.exists(path):
+            raise FileNotFoundError(f"File does not exist: {path}")
+        os.makedirs(self.trash_dir, exist_ok=True)
+
+        basename = os.path.basename(path)
+        stem, ext = os.path.splitext(basename)
+        destination = os.path.join(self.trash_dir, basename)
+        counter = 1
+        while os.path.exists(destination):
+            destination = os.path.join(self.trash_dir, f"{stem}_{counter}{ext}")
+            counter += 1
+
+        shutil.move(path, destination)
+        return destination
+
+    def _close_tab(self, tab_id):
+        log_tab = self.tabs.pop(tab_id, None)
+        if not log_tab:
+            return
+        normalized = self._normalize_path(log_tab.filename)
+        self.path_to_tab.pop(normalized, None)
+        log_tab.destroy()
+        self.notebook.forget(tab_id)
+
     def select_log_file(self):
         """Open file dialog to select one or more log files"""
-        # Get all CSV files sorted by modification time (newest first)
         try:
-            csv_files = [f for f in os.listdir(self.log_dir) if f.endswith('.csv')]
-            csv_files.sort(key=lambda x: os.path.getmtime(os.path.join(self.log_dir, x)), reverse=True)
+            csv_files = self._list_csv_files()
         except Exception as e:
-            print(f"Error reading log directory: {e}")
+            messagebox.showerror("Log Directory Error", f"Unable to read log directory:\n{e}")
             return []
-        
+
         if not csv_files:
-            print("No log files found!")
+            messagebox.showinfo("No Logs Found", f"No CSV logs found in:\n{self.log_dir}")
             return []
-        
-        # Create custom selection dialog
+
         dialog = tk.Toplevel(self.root)
         dialog.title("Select Log Files")
         dialog.geometry("650x450")
         dialog.transient(self.root)
         dialog.grab_set()
-        
+
         selected_files = []
         check_vars = []
         checkbuttons = []
-        
+
         def refresh_file_list():
-            """Refresh the file list after deletion"""
             nonlocal csv_files, check_vars, checkbuttons
-            
-            # Get updated file list
-            try:
-                csv_files = [f for f in os.listdir(self.log_dir) if f.endswith('.csv')]
-                csv_files.sort(key=lambda x: os.path.getmtime(os.path.join(self.log_dir, x)), reverse=True)
-            except Exception as e:
-                print(f"Error reading log directory: {e}")
-                return
-            
-            # Clear existing checkboxes
+            csv_files = self._list_csv_files()
             for cb in checkbuttons:
                 cb.destroy()
             check_vars.clear()
             checkbuttons.clear()
-            
-            # Recreate checkboxes
-            for i, f in enumerate(csv_files):
-                parts = f.replace('motor_log_', '').replace('.csv', '').split('_')
-                if len(parts) >= 3:
-                    mode = parts[0]
-                    date = parts[1]
-                    time = parts[2]
-                    
-                    month = date[4:6]
-                    day = date[6:8]
-                    hour = time[0:2]
-                    minute = time[2:4]
-                    
-                    display_name = f"{mode:8s} {month}/{day} {hour}:{minute}"
-                else:
-                    display_name = f
-                
+
+            for f in csv_files:
                 var = tk.BooleanVar()
                 check_vars.append(var)
-                
-                cb = ttk.Checkbutton(scrollable_frame, text=display_name, variable=var)
+                cb = ttk.Checkbutton(scrollable_frame, text=self._format_tab_name(f), variable=var)
                 cb.pack(anchor=tk.W, pady=2)
                 checkbuttons.append(cb)
-        
+
         def on_select():
-            # Get all checked items
             for i, var in enumerate(check_vars):
                 if var.get():
                     selected_files.append(os.path.join(self.log_dir, csv_files[i]))
             dialog.destroy()
-        
+
         def on_cancel():
             dialog.destroy()
-        
+
         def select_all():
             for var in check_vars:
                 var.set(True)
-        
+
         def deselect_all():
             for var in check_vars:
                 var.set(False)
-        
+
         def delete_selected():
-            """Delete selected log files with confirmation"""
-            # Get selected files
             files_to_delete = []
             for i, var in enumerate(check_vars):
                 if var.get():
                     files_to_delete.append(csv_files[i])
-            
+
             if not files_to_delete:
-                tk.messagebox.showwarning("No Selection", "Please select files to delete.")
+                messagebox.showwarning("No Selection", "Please select files to move to trash.")
                 return
-            
-            # Confirm deletion
+
             count = len(files_to_delete)
-            message = f"Are you sure you want to permanently delete {count} file(s)?\n\nThis cannot be undone!"
-            if not tk.messagebox.askyesno("Confirm Delete", message):
+            message = (
+                f"Move {count} file(s) to the log trash folder?\n\n"
+                f"Destination: {self.trash_dir}"
+            )
+            if not messagebox.askyesno("Confirm Move to Trash", message):
                 return
-            
-            # Delete files
-            deleted_count = 0
+
+            moved_count = 0
             for filename in files_to_delete:
                 try:
                     filepath = os.path.join(self.log_dir, filename)
-                    os.remove(filepath)
-                    deleted_count += 1
-                    print(f"Deleted: {filename}")
+                    normalized = self._normalize_path(filepath)
+                    destination = self._move_to_trash(filepath)
+                    moved_count += 1
+                    print(f"Moved to trash: {filename} -> {destination}")
+                    open_tab = self.path_to_tab.get(normalized)
+                    if open_tab:
+                        self._close_tab(open_tab)
                 except Exception as e:
-                    print(f"Error deleting {filename}: {e}")
-                    tk.messagebox.showerror("Delete Error", f"Failed to delete {filename}:\n{e}")
-            
-            # Show result
-            if deleted_count > 0:
-                tk.messagebox.showinfo("Delete Complete", f"Successfully deleted {deleted_count} file(s).")
+                    messagebox.showerror("Trash Move Error", f"Failed to move {filename}:\n{e}")
+
+            if moved_count > 0:
+                self.update_status()
+                messagebox.showinfo("Move Complete", f"Moved {moved_count} file(s) to trash.")
                 refresh_file_list()
-        
-        # Create main frame
+
         frame = ttk.Frame(dialog, padding="10")
         frame.pack(fill=tk.BOTH, expand=True)
-        
+
         label = ttk.Label(frame, text="Select log files to open (most recent first):", font=('Arial', 10, 'bold'))
         label.pack(pady=(0, 10))
-        
-        # Create scrollable frame for checkboxes
+
         canvas = tk.Canvas(frame, highlightthickness=0)
         scrollbar = ttk.Scrollbar(frame, orient=tk.VERTICAL, command=canvas.yview)
         scrollable_frame = ttk.Frame(canvas)
-        
-        scrollable_frame.bind(
-            "<Configure>",
-            lambda e: canvas.configure(scrollregion=canvas.bbox("all"))
-        )
-        
+
+        scrollable_frame.bind("<Configure>", lambda e: canvas.configure(scrollregion=canvas.bbox("all")))
         canvas.create_window((0, 0), window=scrollable_frame, anchor="nw")
         canvas.configure(yscrollcommand=scrollbar.set)
-        
+
         canvas.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
         scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
-        
-        # Add checkboxes for each file
-        for i, f in enumerate(csv_files):
-            parts = f.replace('motor_log_', '').replace('.csv', '').split('_')
-            if len(parts) >= 3:
-                mode = parts[0]
-                date = parts[1]
-                time = parts[2]
-                
-                month = date[4:6]
-                day = date[6:8]
-                hour = time[0:2]
-                minute = time[2:4]
-                
-                display_name = f"{mode:8s} {month}/{day} {hour}:{minute}"
-            else:
-                display_name = f
-            
-            var = tk.BooleanVar()
-            check_vars.append(var)
-            
-            cb = ttk.Checkbutton(scrollable_frame, text=display_name, variable=var)
-            cb.pack(anchor=tk.W, pady=2)
-            checkbuttons.append(cb)
-        
-        # Selection buttons
+
         select_frame = ttk.Frame(frame)
         select_frame.pack(pady=(10, 0))
-        
+
         ttk.Button(select_frame, text="Select All", command=select_all).pack(side=tk.LEFT, padx=5)
         ttk.Button(select_frame, text="Deselect All", command=deselect_all).pack(side=tk.LEFT, padx=5)
-        ttk.Button(select_frame, text="🗑️ Delete Selected", command=delete_selected).pack(side=tk.LEFT, padx=5)
-        
-        # Action buttons
+        ttk.Button(select_frame, text="Move Selected to Trash", command=delete_selected).pack(side=tk.LEFT, padx=5)
+
         button_frame = ttk.Frame(frame)
         button_frame.pack(pady=(10, 0))
-        
+
         ttk.Button(button_frame, text="Open Selected", command=on_select).pack(side=tk.LEFT, padx=5)
         ttk.Button(button_frame, text="Cancel", command=on_cancel).pack(side=tk.LEFT, padx=5)
-        
+
+        refresh_file_list()
         dialog.wait_window()
-        
+
         return selected_files
-    
+
     def add_tab(self, filename=None):
         """Add a new tab with a log file"""
         if filename is None:
             filenames = self.select_log_file()
             if not filenames:
                 return
-            
-            # Open all selected files
             for fname in filenames:
                 self._add_single_tab(fname)
         else:
             self._add_single_tab(filename)
-    
+
     def _add_single_tab(self, filename):
         """Add a single tab for a log file"""
-        
-        # Check if already open
-        basename = os.path.basename(filename)
-        if basename in self.tabs:
-            # Switch to existing tab
-            for i in range(self.notebook.index("end")):
-                if self.notebook.tab(i, "text") == self._format_tab_name(basename):
-                    self.notebook.select(i)
-                    return
-        
-        # Create new tab
+        normalized = self._normalize_path(filename)
+        if not os.path.exists(normalized):
+            messagebox.showerror("File Not Found", f"Cannot open missing file:\n{normalized}")
+            return
+
+        existing_tab = self.path_to_tab.get(normalized)
+        if existing_tab and existing_tab in self.tabs:
+            self.notebook.select(existing_tab)
+            return
+        if existing_tab and existing_tab not in self.tabs:
+            self.path_to_tab.pop(normalized, None)
+
         tab_frame = ttk.Frame(self.notebook)
-        self.notebook.add(tab_frame, text=self._format_tab_name(basename))
-        
-        # Create log tab
-        log_tab = LogTab(filename, tab_frame)
-        self.tabs[basename] = log_tab
-        
-        # Switch to new tab
+        self.notebook.add(tab_frame, text=self._format_tab_name(os.path.basename(normalized)))
+        tab_id = str(tab_frame)
+
+        log_tab = LogTab(normalized, tab_frame)
+        if not log_tab.loaded:
+            log_tab.destroy()
+            self.notebook.forget(tab_frame)
+            return
+
+        self.tabs[tab_id] = log_tab
+        self.path_to_tab[normalized] = tab_id
         self.notebook.select(tab_frame)
-        
-        # Update status
         self.update_status()
-    
+
     def _format_tab_name(self, filename):
         """Format filename for tab display"""
         parts = filename.replace('motor_log_', '').replace('.csv', '').split('_')
-        if len(parts) >= 3:
+        if len(parts) >= 3 and len(parts[1]) == 8 and len(parts[2]) >= 6:
             mode = parts[0]
             date = parts[1]
             time = parts[2]
-            
+
             month = date[4:6]
             day = date[6:8]
             hour = time[0:2]
             minute = time[2:4]
-            
-            return f"{mode} {month}/{day} {hour}:{minute}"
+            second = time[4:6]
+            suffix = ""
+            if len(parts) > 3:
+                suffix = f" #{parts[3]}"
+            return f"{mode} {month}/{day} {hour}:{minute}:{second}{suffix}"
         return filename
-    
+
     def close_current_tab(self):
         """Close the currently selected tab"""
         current = self.notebook.select()
         if not current:
             return
-        
-        tab_index = self.notebook.index(current)
-        tab_text = self.notebook.tab(tab_index, "text")
-        
-        # Find and destroy the log tab
-        for basename, log_tab in list(self.tabs.items()):
-            if self._format_tab_name(basename) == tab_text:
-                log_tab.destroy()
-                del self.tabs[basename]
-                break
-        
-        # Remove tab
-        self.notebook.forget(current)
-        
-        # Update status
+        self._close_tab(current)
         self.update_status()
-    
+
     def delete_current_tab(self):
-        """Delete the log file of the currently selected tab"""
+        """Move the current tab's file to trash and close the tab."""
         current = self.notebook.select()
         if not current:
             messagebox.showwarning("No Tab", "No tab is currently open.")
             return
-        
-        tab_index = self.notebook.index(current)
-        tab_text = self.notebook.tab(tab_index, "text")
-        
-        # Find the log tab and filename
-        filename = None
-        basename = None
-        for bn, log_tab in self.tabs.items():
-            if self._format_tab_name(bn) == tab_text:
-                filename = log_tab.filename
-                basename = bn
-                break
-        
-        if not filename:
-            messagebox.showerror("Error", "Could not find file for current tab.")
+
+        log_tab = self.tabs.get(current)
+        if not log_tab:
+            messagebox.showerror("Tab Error", "Could not resolve selected tab.")
             return
-        
-        # Confirm deletion
-        message = f"Are you sure you want to permanently delete this log file?\n\n{os.path.basename(filename)}\n\nThis cannot be undone!"
-        if not messagebox.askyesno("Confirm Delete", message):
+
+        filename = log_tab.filename
+        prompt = (
+            "Move this log file to trash?\n\n"
+            f"{os.path.basename(filename)}\n\n"
+            f"Destination: {self.trash_dir}"
+        )
+        if not messagebox.askyesno("Confirm Move to Trash", prompt):
             return
-        
-        # Delete the file
+
         try:
-            os.remove(filename)
-            print(f"Deleted: {filename}")
-            
-            # Close the tab
-            log_tab = self.tabs[basename]
-            log_tab.destroy()
-            del self.tabs[basename]
-            self.notebook.forget(current)
-            
-            # Update status
+            destination = self._move_to_trash(filename)
+            print(f"Moved to trash: {filename} -> {destination}")
+            self._close_tab(current)
             self.update_status()
-            
-            messagebox.showinfo("Delete Complete", f"Successfully deleted:\n{os.path.basename(filename)}")
+            messagebox.showinfo("Moved to Trash", f"Moved:\n{os.path.basename(filename)}")
         except Exception as e:
-            print(f"Error deleting file: {e}")
-            messagebox.showerror("Delete Error", f"Failed to delete file:\n{e}")
-    
+            messagebox.showerror("Trash Move Error", f"Failed to move file:\n{e}")
+
     def refresh_current_tab(self):
         """Refresh the currently selected tab"""
         current = self.notebook.select()
         if not current:
             return
-        
-        tab_index = self.notebook.index(current)
-        tab_text = self.notebook.tab(tab_index, "text")
-        
-        # Find the filename
-        for basename, log_tab in self.tabs.items():
-            if self._format_tab_name(basename) == tab_text:
-                filename = log_tab.filename
-                
-                # Destroy old tab
-                log_tab.destroy()
-                
-                # Create new frame
-                tab_frame = ttk.Frame(self.notebook)
-                self.notebook.insert(tab_index, tab_frame, text=tab_text)
-                self.notebook.forget(tab_index + 1)
-                
-                # Reload
-                new_log_tab = LogTab(filename, tab_frame)
-                self.tabs[basename] = new_log_tab
-                
-                # Select refreshed tab
-                self.notebook.select(tab_frame)
-                break
-    
+
+        current_log_tab = self.tabs.get(current)
+        if not current_log_tab:
+            return
+
+        filename = current_log_tab.filename
+        current_log_tab.destroy()
+
+        frame = self.root.nametowidget(current)
+        for child in frame.winfo_children():
+            child.destroy()
+
+        refreshed = LogTab(filename, frame)
+        if not refreshed.loaded:
+            self._close_tab(current)
+            self.update_status()
+            return
+
+        self.tabs[current] = refreshed
+        self.notebook.select(current)
+
     def update_status(self):
         """Update status label"""
         count = len(self.tabs)
@@ -662,11 +804,12 @@ class TabbedLogViewer:
         print("  • Multiple logs open in tabs")
         print("  • Interactive plots with zoom/pan")
         print("  • Navigation state visualization")
+        print("  • Timing diagnostics and effective sample rate stats")
         print("  • MPU6050 gyro and odometry data")
         print("\nControls:")
         print("  • Open Log: Add new tab")
         print("  • Close Tab: Remove current tab")
-        print("  • Delete Tab: Delete current log file")
+        print("  • Move to Trash: Move current log file to logs/.trash")
         print("  • Refresh: Reload current log")
         print("=" * 60)
         print()

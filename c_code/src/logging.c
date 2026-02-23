@@ -1,14 +1,20 @@
 #include "../include/logging.h"
 #include "../include/motor.h"
+#include "../include/runtime_state.h"
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <time.h>
 #include <pthread.h>
+#include <errno.h>
+#include <sys/stat.h>
+#include <sys/types.h>
 
-// Maximum number of log entries before buffer is full (~48MB RAM, ~1.4 hrs at 500Hz)
+// Maximum number of log entries before buffer is full (~48MB RAM, ~2.8 hrs at 100Hz)
 // Reduced from 15M to prevent out-of-memory issues
-#define LOG_SIZE 1000000
+// Maximum number of log entries before buffer is full (~288MB RAM, ~5 mins at 20kHz)
+// Increased from 100k to 6M for high-speed logging
+#define LOG_SIZE 6000000
 
 // Maximum number of duplicate files to check before giving up
 #define MAX_FILE_DUPLICATES 1000
@@ -17,16 +23,50 @@
 static LogEntry *log_buffer = NULL;
 static int log_index = 0;
 static ControlMode current_mode = MODE_IDLE;
+static pthread_mutex_t log_lock = PTHREAD_MUTEX_INITIALIZER;
 
-// External references to motor and encoder state (defined in motor.h)
-extern Motor motors[2];
-extern EncoderState encoders[2];
-extern OdometryState odometry;
-extern NavigationController nav_ctrl;
-extern pthread_mutex_t imu_data_lock;
-extern double current_gyro_rate;
+static const char* control_mode_name(char mode) {
+    switch ((ControlMode)mode) {
+        case MODE_IDLE:
+            return "IDLE";
+        case MODE_JOYSTICK:
+            return "JOYSTICK";
+        case MODE_VOICE_NAV:
+            return "VOICE";
+        case MODE_ML:
+            return "ML";
+        default:
+            return "UNKNOWN";
+    }
+}
+
+static const char* nav_state_name(char nav_state) {
+    switch ((NavState)nav_state) {
+        case NAV_IDLE:
+            return "IDLE";
+        case NAV_TURNING:
+            return "TURNING";
+        case NAV_DRIVING:
+            return "DRIVING";
+        case NAV_GOTO:
+            return "GOTO";
+        case NAV_BUCKET_ROTATE:
+            return "BUCKET_ROTATE";
+        case NAV_BUCKET_BACKUP:
+            return "BUCKET_BACKUP";
+        case NAV_ML:
+            return "ML";
+        default:
+            return "UNKNOWN";
+    }
+}
 
 void init_log_system(void) {
+    pthread_mutex_lock(&log_lock);
+    if (log_buffer) {
+        free(log_buffer);
+        log_buffer = NULL;
+    }
     log_buffer = (LogEntry*)malloc(sizeof(LogEntry) * LOG_SIZE);
     if (!log_buffer) {
         printf("ERROR: Failed to allocate log buffer (%zu bytes)\n", 
@@ -36,50 +76,54 @@ void init_log_system(void) {
                LOG_SIZE, (sizeof(LogEntry) * LOG_SIZE) / (1024 * 1024));
     }
     log_index = 0;
+    pthread_mutex_unlock(&log_lock);
 }
 
 void log_data(double time) {
-    // Silently ignore if buffer not initialized or full
-    if (!log_buffer || log_index >= LOG_SIZE) {
-        return;
-    }
+    LogEntry snapshot = {0};
+    snapshot.time = time;
 
-    LogEntry *entry = &log_buffer[log_index];
-    entry->time = time;
-    entry->mode = (char)current_mode;
+    // Maintain lock order compatibility with control loop: state -> motor.
+    pthread_mutex_lock(&state_lock);
+    snapshot.odom_x = odometry.x;
+    snapshot.odom_y = odometry.y;
+    snapshot.odom_heading = odometry.heading;
+    snapshot.nav_state = (char)nav_ctrl.state;
+    pthread_mutex_unlock(&state_lock);
 
-    // Capture left motor state (thread-safe)
+    pthread_mutex_lock(&log_lock);
+    snapshot.mode = (char)current_mode;
+    pthread_mutex_unlock(&log_lock);
+
+    // Capture left motor state (thread-safe).
     pthread_mutex_lock(&motors[0].lock);
-    entry->target_l = encoders[0].target_counts;
-    entry->actual_l = encoders[0].total_counts + 
-                      (encoders[0].current_raw_angle - encoders[0].start_raw_angle);
-    entry->pulse_l = motors[0].last_pulse_ns;
-    entry->raw_l = encoders[0].current_raw_angle;
+    snapshot.target_l = encoders[0].target_counts;
+    snapshot.actual_l = encoders[0].total_counts - encoders[0].move_start_counts;
+    snapshot.pulse_l = motors[0].last_pulse_ns;
+    snapshot.raw_l = encoders[0].current_raw_angle;
     pthread_mutex_unlock(&motors[0].lock);
 
-    // Capture right motor state (thread-safe)
+    // Capture right motor state (thread-safe).
     pthread_mutex_lock(&motors[1].lock);
-    entry->target_r = encoders[1].target_counts;
-    entry->actual_r = encoders[1].total_counts + 
-                      (encoders[1].current_raw_angle - encoders[1].start_raw_angle);
-    entry->pulse_r = motors[1].last_pulse_ns;
-    entry->raw_r = encoders[1].current_raw_angle;
+    snapshot.target_r = encoders[1].target_counts;
+    snapshot.actual_r = encoders[1].total_counts - encoders[1].move_start_counts;
+    snapshot.pulse_r = motors[1].last_pulse_ns;
+    snapshot.raw_r = encoders[1].current_raw_angle;
     pthread_mutex_unlock(&motors[1].lock);
 
-    // Capture IMU data (thread-safe)
+    // Capture IMU data (thread-safe). Keep lock ordering compatible with
+    // update_odometry() to avoid lock inversion.
     pthread_mutex_lock(&imu_data_lock);
-    entry->gyro_z = current_gyro_rate;
+    snapshot.gyro_z = current_gyro_rate;
     pthread_mutex_unlock(&imu_data_lock);
 
-    // Capture odometry data (updated by coordinated_control_thread)
-    entry->odom_x = odometry.x;
-    entry->odom_y = odometry.y;
-    entry->odom_heading = odometry.heading;
-
-    // Capture navigation state
-    entry->nav_state = (char)nav_ctrl.state;
-
-    log_index++;
+    // Commit snapshot to buffer.
+    pthread_mutex_lock(&log_lock);
+    if (log_buffer && log_index < LOG_SIZE) {
+        log_buffer[log_index] = snapshot;
+        log_index++;
+    }
+    pthread_mutex_unlock(&log_lock);
 }
 
 /**
@@ -95,18 +139,11 @@ static void write_log_csv(FILE *f) {
     fprintf(f, "time,mode,pwm_l,i2c_l,pwm_r,i2c_r,target_l,actual_l,target_r,actual_r,"
                "gyro_z,odom_x,odom_y,odom_heading,nav_state\n");
 
-    // Mode and navigation state name mappings
-    const char *mode_names[] = {"IDLE", "JOYSTICK", "VOICE"};
-    const char *nav_state_names[] = {
-        "IDLE", "TURNING", "DRIVING", "GOTO", 
-        "BUCKET_APPROACH", "BUCKET_ROTATE", "BUCKET_BACKUP"
-    };
-
     // Write all log entries
     for (int i = 0; i < log_index; i++) {
         fprintf(f, "%.4f,%s,%d,%d,%d,%d,%d,%d,%d,%d,%.4f,%.4f,%.4f,%.2f,%s\n",
             log_buffer[i].time,
-            mode_names[(int)log_buffer[i].mode],
+            control_mode_name(log_buffer[i].mode),
             log_buffer[i].pulse_l, log_buffer[i].raw_l,
             log_buffer[i].pulse_r, log_buffer[i].raw_r,
             log_buffer[i].target_l, log_buffer[i].actual_l,
@@ -115,12 +152,14 @@ static void write_log_csv(FILE *f) {
             log_buffer[i].odom_x,
             log_buffer[i].odom_y,
             log_buffer[i].odom_heading,
-            nav_state_names[(int)log_buffer[i].nav_state]);
+            nav_state_name(log_buffer[i].nav_state));
     }
 }
 
 void dump_log(void) {
+    pthread_mutex_lock(&log_lock);
     if (!log_buffer) {
+        pthread_mutex_unlock(&log_lock);
         return;
     }
 
@@ -133,16 +172,34 @@ void dump_log(void) {
     // Count entries by mode to determine primary mode for filename
     int joystick_count = 0;
     int voice_count = 0;
+    int ml_count = 0;
     for (int i = 0; i < log_index; i++) {
         if (log_buffer[i].mode == MODE_JOYSTICK) {
             joystick_count++;
         } else if (log_buffer[i].mode == MODE_VOICE_NAV) {
             voice_count++;
+        } else if (log_buffer[i].mode == MODE_ML) {
+            ml_count++;
         }
     }
 
     // Determine primary mode (whichever has more entries)
-    const char *mode_str = (joystick_count > voice_count) ? "joystick" : "voice";
+    const char *mode_str = "voice";
+    int max_count = voice_count;
+    if (joystick_count > max_count) {
+        mode_str = "joystick";
+        max_count = joystick_count;
+    }
+    if (ml_count > max_count) {
+        mode_str = "ml";
+    }
+
+    // Ensure the persistent log directory exists.
+    if (mkdir("logs", 0755) < 0 && errno != EEXIST) {
+        fprintf(stderr, "ERROR: Could not create logs directory: %s\n", strerror(errno));
+        pthread_mutex_unlock(&log_lock);
+        return;
+    }
 
     // Find unique filename by checking for duplicates
     // Auto-increment counter if file already exists to prevent overwriting
@@ -150,12 +207,12 @@ void dump_log(void) {
     while (1) {
         if (duplicate_file_counter == 0) {
             snprintf(filename, sizeof(filename),
-                     "../logs/motor_log_%s_%04d%02d%02d_%02d%02d%02d.csv",
+                     "logs/motor_log_%s_%04d%02d%02d_%02d%02d%02d.csv",
                      mode_str, t->tm_year + 1900, t->tm_mon + 1, t->tm_mday,
                      t->tm_hour, t->tm_min, t->tm_sec);
         } else {
             snprintf(filename, sizeof(filename),
-                     "../logs/motor_log_%s_%04d%02d%02d_%02d%02d%02d_%d.csv",
+                     "logs/motor_log_%s_%04d%02d%02d_%02d%02d%02d_%d.csv",
                      mode_str, t->tm_year + 1900, t->tm_mon + 1, t->tm_mday,
                      t->tm_hour, t->tm_min, t->tm_sec, duplicate_file_counter);
         }
@@ -172,6 +229,7 @@ void dump_log(void) {
         // Safety: prevent infinite loop
         if (duplicate_file_counter > MAX_FILE_DUPLICATES) {
             fprintf(stderr, "ERROR: Too many log files with same timestamp\n");
+            pthread_mutex_unlock(&log_lock);
             return;
         }
     }
@@ -180,6 +238,7 @@ void dump_log(void) {
     FILE *f = fopen(filename, "w");
     if (!f) {
         fprintf(stderr, "ERROR: Could not open log file %s\n", filename);
+        pthread_mutex_unlock(&log_lock);
         return;
     }
 
@@ -187,8 +246,8 @@ void dump_log(void) {
     fclose(f);
 
     printf("Saved %d log entries to %s\n", log_index, filename);
-    printf("  Joystick entries: %d, Voice navigation entries: %d\n", 
-           joystick_count, voice_count);
+    printf("  Joystick entries: %d, Voice navigation entries: %d, ML entries: %d\n", 
+           joystick_count, voice_count, ml_count);
 
     // Also save to RAM disk for quick access during session
     // This allows real-time log analysis without disk I/O delays
@@ -207,12 +266,60 @@ void dump_log(void) {
     free(log_buffer);
     log_buffer = NULL;
     log_index = 0;
+    pthread_mutex_unlock(&log_lock);
 }
 
 void set_control_mode(ControlMode mode) {
+    pthread_mutex_lock(&log_lock);
     current_mode = mode;
+    pthread_mutex_unlock(&log_lock);
 }
 
 ControlMode get_control_mode(void) {
-    return current_mode;
+    pthread_mutex_lock(&log_lock);
+    ControlMode mode = current_mode;
+    pthread_mutex_unlock(&log_lock);
+    return mode;
+}
+
+static pthread_t logging_thread_id;
+static int logging_thread_running = 0;
+
+static void* logging_thread(void* arg) {
+    (void)arg;
+    struct timespec ts;
+    ts.tv_sec = 0;
+    ts.tv_nsec = 50000; // 50 microseconds = 20kHz
+
+    printf("Logging thread started at 20kHz\n");
+
+    while (logging_thread_running) {
+        log_data(get_time_sec());
+        nanosleep(&ts, NULL);
+    }
+    return NULL;
+}
+
+int start_logging_thread(void) {
+    if (logging_thread_running) {
+        return 0; // Already running
+    }
+
+    logging_thread_running = 1;
+    if (pthread_create(&logging_thread_id, NULL, logging_thread, NULL) != 0) {
+        perror("Failed to create logging thread");
+        logging_thread_running = 0;
+        return -1;
+    }
+    return 0;
+}
+
+void stop_logging_thread(void) {
+    if (!logging_thread_running) {
+        return;
+    }
+
+    logging_thread_running = 0;
+    pthread_join(logging_thread_id, NULL);
+    printf("Logging thread stopped\n");
 }

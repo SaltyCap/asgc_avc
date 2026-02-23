@@ -1,9 +1,24 @@
+import math
 import os
-import sys
 
-# Add parent directory to path to import course_config
-sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-from course_config import COURSE_WIDTH, COURSE_HEIGHT, BUCKETS, CENTER, START_POSITION, START_HEADING
+try:
+    from course_config import (
+        BUCKETS,
+        CENTER,
+        COURSE_HEIGHT,
+        COURSE_WIDTH,
+        START_HEADING,
+        START_POSITION,
+    )
+except ImportError:
+    from web_server.course_config import (
+        BUCKETS,
+        CENTER,
+        COURSE_HEIGHT,
+        COURSE_WIDTH,
+        START_HEADING,
+        START_POSITION,
+    )
 
 class Config:
     # Course configuration (imported from course_config.py)
@@ -13,6 +28,35 @@ class Config:
     CENTER = CENTER
     START_POSITION = START_POSITION
     START_HEADING = START_HEADING  # Now linked to course_config.py
+
+    # Runtime/network
+    BIND_HOST = os.getenv("BIND_HOST", "0.0.0.0")
+    BIND_PORT = int(os.getenv("BIND_PORT", 5001))
+    SECRET_KEY = os.getenv("ASGC_SECRET_KEY", os.urandom(32).hex())
+
+    # Web authentication
+    AUTH_USERNAME = os.getenv("ASGC_WEB_USERNAME", "admin")
+    AUTH_PASSWORD_ENV = "ASGC_WEB_PASSWORD"
+    AUTH_PASSWORD_HASH_ENV = "ASGC_WEB_PASSWORD_HASH"
+    AUTH_PASSWORD_HASH_FILE = os.getenv(
+        "ASGC_WEB_PASSWORD_HASH_FILE",
+        os.path.join(os.path.dirname(os.path.dirname(__file__)), ".secrets", "web_password.hash"),
+    )
+    PASSWORD_HASH_ALGORITHM = "pbkdf2_sha256"
+    PASSWORD_HASH_ITERATIONS = max(120000, int(os.getenv("ASGC_PASSWORD_HASH_ITERATIONS", "260000")))
+    SESSION_COOKIE_HTTPONLY = True
+    SESSION_COOKIE_SAMESITE = "Lax"
+    SESSION_COOKIE_SECURE = os.getenv("ASGC_SESSION_COOKIE_SECURE", "").lower() in {
+        "1",
+        "true",
+        "yes",
+        "on",
+    }
+    ALLOWED_ORIGINS = tuple(
+        origin.strip()
+        for origin in os.getenv("ASGC_ALLOWED_ORIGINS", "").split(",")
+        if origin.strip()
+    )
 
     # Robot physical parameters (synchronized with c_code/include/common.h)
     WHEEL_DIAMETER_INCHES = 5.3
@@ -29,16 +73,17 @@ class Config:
     HEADING_TOLERANCE = 5.0
 
     # Derived values
-    WHEEL_CIRCUMFERENCE_INCHES = 3.14159 * WHEEL_DIAMETER_INCHES
+    WHEEL_CIRCUMFERENCE_INCHES = math.pi * WHEEL_DIAMETER_INCHES
     COUNTS_PER_INCH = COUNTS_PER_REV / WHEEL_CIRCUMFERENCE_INCHES
     COUNTS_PER_FOOT = COUNTS_PER_INCH * INCHES_PER_FOOT
 
     # Paths
     MODEL_PATH = os.path.join(os.path.dirname(os.path.dirname(__file__)), "model")
+    MAX_MOTOR_COMMAND_QUEUE = max(10, int(os.getenv("ASGC_MAX_MOTOR_QUEUE", "200")))
     
     @classmethod
     def get_motor_control_path(cls):
-        return "../c_code/asgc_motor_control"
+        return os.getenv("ASGC_MOTOR_EXECUTABLE", "asgc_motor_control")
 
     @classmethod
     def get_bucket_position(cls, color):

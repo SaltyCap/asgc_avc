@@ -1,0 +1,30 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+    <title>ASGC Password Setup</title>
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}">
+</head>
+<body class="page-auth">
+    <main class="card">
+        <h1>{% if configured %}Change{% else %}Create{% endif %} Web Login Password</h1>
+        <p>
+            This password is stored as a local hash in
+            <code>web_server/.secrets/web_password.hash</code>.
+        </p>
+        <form method="post" action="/setup">
+            <input type="hidden" name="next" value="{{ next_url }}">
+            <label for="password">Password</label>
+            <input id="password" name="password" type="password" autocomplete="new-password" required>
+            <label for="confirm_password">Confirm Password</label>
+            <input id="confirm_password" name="confirm_password" type="password" autocomplete="new-password" required>
+            <button type="submit">{% if configured %}Update Password{% else %}Save Password{% endif %}</button>
+        </form>
+        {% if error %}
+        <div class="error">{{ error }}</div>
+        {% endif %}
+        <div class="hint">Minimum length: 8 characters.</div>
+    </main>
+</body>
+</html>

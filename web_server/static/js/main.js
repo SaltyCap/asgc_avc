@@ -16,11 +16,14 @@ let finalTranscript = '';
 let audioContext;
 let source;
 let processor;
+let voiceAuthFailed = false;
 
 // Queue Control Variables
 const queueStatus = document.getElementById('queueStatus');
 const clearQueueBtn = document.getElementById('clearQueueBtn');
 const resetPosBtn = document.getElementById('resetPosBtn');
+const mlModeBtn = document.getElementById('mlModeBtn');
+const modeIndicator = document.getElementById('modeIndicator');
 const queueSlots = [
     document.getElementById('slot0'),
     document.getElementById('slot1'),
@@ -29,24 +32,75 @@ const queueSlots = [
     document.getElementById('slot4')
 ];
 let motorWs;
+let motorAuthFailed = false;
+let currentControlMode = 'voice';
+let lastNavState = 'IDLE';
 
 // PWM Limit Control Variables (also controls speed/throttle)
 const pwmLimitSlider = document.getElementById('pwmLimitSlider');
 const pwmLimitValue = document.getElementById('pwmLimitValue');
-const pwmMinValue = document.getElementById('pwMinValue');
-const pwmMaxValue = document.getElementById('pwMaxValue');
+const pwMinValue = document.getElementById('pwMinValue');
+const pwMaxValue = document.getElementById('pwMaxValue');
 let pwmLimit = 25; // 0-100%, scales the PWM output range
 
 // PWM pulse width constants (in microseconds)
 const PW_NEUTRAL = 1500;
-const PW_FORWARD_START = 1550;  // ESC deadband: forward starts here
 const PW_FORWARD_MAX = 2000;
-const PW_REVERSE_START = 1450;  // ESC deadband: reverse starts here
 const PW_REVERSE_MAX = 1000;
 
 // Connection Status Variables
 const statusDot = document.getElementById('statusDot');
 const statusText = document.getElementById('statusText');
+
+function isMlActive() {
+    return currentControlMode === 'ml' || lastNavState === 'ML';
+}
+
+function updateModeCue() {
+    const mlActive = isMlActive();
+
+    if (modeIndicator) {
+        modeIndicator.textContent = mlActive ? 'ML' : 'Regular';
+        modeIndicator.classList.toggle('ml', mlActive);
+        modeIndicator.classList.toggle('regular', !mlActive);
+    }
+
+    if (mlModeBtn) {
+        mlModeBtn.textContent = mlActive ? 'REGULAR MODE' : 'ML MODE';
+        mlModeBtn.classList.toggle('mode-active', mlActive);
+    }
+}
+
+function redirectToLogin() {
+    const next = `${window.location.pathname}${window.location.search}`;
+    window.location.href = `/login?next=${encodeURIComponent(next)}`;
+}
+
+function redirectToSetup() {
+    const next = `${window.location.pathname}${window.location.search}`;
+    window.location.href = `/setup?next=${encodeURIComponent(next)}`;
+}
+
+async function fetchJson(url, options = {}) {
+    const response = await fetch(url, options);
+    if (response.status === 401) {
+        redirectToLogin();
+        throw new Error('Unauthorized');
+    }
+    if (response.status === 503) {
+        let payload = {};
+        try {
+            payload = await response.json();
+        } catch (_) {
+        }
+        if (payload && payload.setup_required) {
+            redirectToSetup();
+            throw new Error('Setup required');
+        }
+        throw new Error('Service unavailable');
+    }
+    return response.json();
+}
 
 // ===== CAR CONTROL FUNCTIONS =====
 
@@ -116,6 +170,17 @@ function connectWebSocket() {
 
     ws.onmessage = (event) => {
         const data = JSON.parse(event.data);
+        if (data.type === 'error') {
+            const msg = (data.message || '').toLowerCase();
+            if (msg.includes('setup')) {
+                voiceAuthFailed = true;
+                redirectToSetup();
+            } else if (msg.includes('auth')) {
+                voiceAuthFailed = true;
+                redirectToLogin();
+            }
+            return;
+        }
         if (data.type === 'partial') {
             transcriptEl.textContent = finalTranscript + data.text;
         } else if (data.type === 'final') {
@@ -141,8 +206,10 @@ function connectWebSocket() {
             audioContext.close();
             audioContext = null;
         }
-        // Auto-reconnect
-        setTimeout(connectWebSocket, 3000);
+        // Auto-reconnect unless auth failed.
+        if (!voiceAuthFailed) {
+            setTimeout(connectWebSocket, 3000);
+        }
     };
 
     ws.onerror = (error) => {
@@ -242,6 +309,9 @@ function connectMotorWebSocket() {
         console.log('Motor WebSocket connected');
         if (statusDot) statusDot.classList.add('connected');
         if (statusText) statusText.textContent = 'Connected';
+        motorWs.send(JSON.stringify({ type: 'set_mode', mode: 'voice' }));
+        currentControlMode = 'voice';
+        updateModeCue();
         // Send current PWM limit (also sends speed/throttle)
         updatePwmLimitDisplay();
     };
@@ -249,6 +319,23 @@ function connectMotorWebSocket() {
     motorWs.onmessage = (event) => {
         try {
             const data = JSON.parse(event.data);
+            if (data.type === 'error') {
+                const msg = (data.message || '').toLowerCase();
+                if (msg.includes('setup')) {
+                    motorAuthFailed = true;
+                    redirectToSetup();
+                } else if (msg.includes('auth')) {
+                    motorAuthFailed = true;
+                    redirectToLogin();
+                }
+                return;
+            }
+
+            if (data.type === 'mode_set') {
+                currentControlMode = data.mode || currentControlMode;
+                updateModeCue();
+                return;
+            }
 
             // Handle PWM settings broadcast from server
             if (data.type === 'pwm_set') {
@@ -284,7 +371,9 @@ function connectMotorWebSocket() {
         console.log('Motor WebSocket disconnected');
         if (statusDot) statusDot.classList.remove('connected');
         if (statusText) statusText.textContent = 'Disconnected';
-        setTimeout(connectMotorWebSocket, 3000);
+        if (!motorAuthFailed) {
+            setTimeout(connectMotorWebSocket, 3000);
+        }
     };
 
     motorWs.onerror = (error) => {
@@ -300,8 +389,20 @@ function connectMotorWebSocket() {
  */
 function sendQueueCommand(command) {
     if (motorWs && motorWs.readyState === WebSocket.OPEN) {
+        motorWs.send(JSON.stringify({ type: 'set_mode', mode: 'voice' }));
         motorWs.send(JSON.stringify({ type: 'voice', command: command }));
     }
+}
+
+function enableMlMode() {
+    if (!(motorWs && motorWs.readyState === WebSocket.OPEN)) {
+        console.warn('Cannot change mode: motor WebSocket is not connected');
+        return;
+    }
+
+    const nextMode = isMlActive() ? 'voice' : 'ml';
+    motorWs.send(JSON.stringify({ type: 'set_mode', mode: nextMode }));
+    console.log(`Requested mode switch to ${nextMode}`);
 }
 
 function startQueue() {
@@ -321,7 +422,18 @@ function resetPosition() {
 }
 
 function calibrateRobot() {
-    sendQueueCommand('calibrate');
+    fetchJson('/api/calibrate', {
+        method: 'POST',
+        headers: {
+            'Content-Type': 'application/json'
+        }
+    })
+        .then(data => {
+            console.log('Calibration initiated:', data);
+        })
+        .catch(error => {
+            console.error('Calibration error:', error);
+        });
 }
 
 function updatePwmLimitDisplay() {
@@ -388,11 +500,14 @@ function sendPwmSettings(minPwm, maxPwm) {
 }
 
 function fetchQueueStatus() {
-    fetch('/api/navigation/status')
-        .then(response => response.json())
+    fetchJson('/api/navigation/status')
         .then(data => {
             if (!data.error) {
-                updateQueueDisplay(data.queue || [], data.queue_running, data.target);
+                if (typeof data.state === 'string') {
+                    lastNavState = data.state.toUpperCase();
+                }
+                updateModeCue();
+                updateQueueDisplay(data.queue || [], data.queue_running, data.current_target);
             }
         })
         .catch(() => { });
@@ -478,8 +593,25 @@ document.addEventListener('DOMContentLoaded', () => {
     connectWebSocket();
 
     // Queue control initialization
-    clearQueueBtn.addEventListener('click', clearQueue);
-    resetPosBtn.addEventListener('click', resetPosition);
+    if (clearQueueBtn) {
+        clearQueueBtn.addEventListener('click', clearQueue);
+    }
+    if (resetPosBtn) {
+        resetPosBtn.addEventListener('click', resetPosition);
+    }
+    if (mlModeBtn) {
+        mlModeBtn.addEventListener('click', () => {
+            const mlActive = isMlActive();
+            const prompt = mlActive
+                ? 'Switch back to regular mode?'
+                : 'Enter ML mode now? Queue/voice commands are paused until you switch back.';
+            if (confirm(prompt)) {
+                enableMlMode();
+            }
+        });
+    }
+
+    updateModeCue();
 
     // Calibrate button initialization
     const calibrateButton = document.getElementById('calibrateButton');
@@ -499,18 +631,18 @@ document.addEventListener('DOMContentLoaded', () => {
     // Shutdown button initialization
     const shutdownButton = document.getElementById('shutdownButton');
     if (shutdownButton) {
+        const defaultShutdownButtonHtml = shutdownButton.innerHTML;
         shutdownButton.addEventListener('click', () => {
             if (confirm('Are you sure you want to shutdown the system? This will save logs and stop the program.')) {
                 shutdownButton.disabled = true;
-                shutdownButton.textContent = '⏳ Shutting down...';
+                shutdownButton.innerHTML = '<span class="btn-icon">⏳</span><span class="btn-text">Shutting...</span>';
 
-                fetch('/api/shutdown', {
+                fetchJson('/api/shutdown', {
                     method: 'POST',
                     headers: {
                         'Content-Type': 'application/json'
                     }
                 })
-                    .then(response => response.json())
                     .then(data => {
                         console.log('Shutdown initiated:', data);
                         // Show shutdown message
@@ -521,7 +653,7 @@ document.addEventListener('DOMContentLoaded', () => {
                     .catch(error => {
                         console.error('Shutdown error:', error);
                         shutdownButton.disabled = false;
-                        shutdownButton.textContent = '🔌 Shutdown';
+                        shutdownButton.innerHTML = defaultShutdownButtonHtml;
                     });
             }
         });

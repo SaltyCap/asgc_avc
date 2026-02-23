@@ -26,8 +26,22 @@
 #define START_Y 15.0
 #define START_HEADING 0.0
 
+// Course landmarks (Must match course_config.py)
+#define COURSE_CENTER_X 15.0
+#define COURSE_CENTER_Y 15.0
+#define BUCKET_RED_X 0.0
+#define BUCKET_RED_Y 0.0
+#define BUCKET_YELLOW_X 0.0
+#define BUCKET_YELLOW_Y 30.0
+#define BUCKET_BLUE_X 30.0
+#define BUCKET_BLUE_Y 30.0
+#define BUCKET_GREEN_X 30.0
+#define BUCKET_GREEN_Y 0.0
 
-// Time utilities
+// ML pickup search area at course center (30in diameter).
+#define ML_PICKUP_CIRCLE_DIAMETER_FT (30.0 / 12.0)
+#define ML_PICKUP_CIRCLE_RADIUS_FT (ML_PICKUP_CIRCLE_DIAMETER_FT / 2.0)
+
 // Time utilities
 double get_time_sec(void);
 void sleep_us(uint32_t microseconds);
@@ -51,8 +65,25 @@ typedef enum {
     NAV_DRIVING,
     NAV_GOTO,           // Meta-state: planning move to target
     NAV_BUCKET_ROTATE,   // Rotating 180 degrees at bucket
-    NAV_BUCKET_BACKUP    // Backing up to 0.25ft from bucket
+    NAV_BUCKET_BACKUP,    // Backing up to 0.25ft from bucket
+    NAV_ML               // ML Inference Control
 } NavState;
+
+typedef enum {
+    BALL_COLOR_NONE = 0,
+    BALL_COLOR_RED = 1,
+    BALL_COLOR_YELLOW = 2,
+    BALL_COLOR_BLUE = 3,
+    BALL_COLOR_GREEN = 4
+} BallColor;
+
+typedef enum {
+    ML_STAGE_INACTIVE = 0,
+    ML_STAGE_TO_CENTER = 1,
+    ML_STAGE_PICKUP_SWEEP = 2,
+    ML_STAGE_WAIT_BALL = 3,
+    ML_STAGE_TO_BUCKET = 4
+} MLStage;
 
 // Navigation Controller State
 typedef struct {
@@ -65,6 +96,12 @@ typedef struct {
     int is_bucket_target;   // 1 if navigating to a colored bucket
     double bucket_x;        // Actual bucket coordinates
     double bucket_y;
+
+    int ml_test_enabled;    // 1 while ML pick-and-place workflow is active
+    MLStage ml_stage;       // Current ML workflow stage
+    int ml_ball_acquired;   // 1 after external pickup confirmation
+    BallColor ml_ball_color;// Color of currently held ball
+    int ml_sweep_waypoint_index; // Current pickup sweep waypoint
 } NavigationController;
 
 #endif

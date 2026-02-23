@@ -27,6 +27,7 @@ extern IMUContext imu;
 int imu_init(void);
 void imu_cleanup(void);
 double imu_read_gyro_z(void);
+int imu_read_gyro_z_sample(double *gyro_z_out);
 void imu_calibrate(int samples);
 
 #endif

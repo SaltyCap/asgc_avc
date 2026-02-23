@@ -34,12 +34,6 @@
                 <button id="carStopButton" class="control-button stop-btn">Stop</button>
                 <span class="status-indicator" id="carStatusDot"></span>
             </div>
-            <div class="control-group">
-                <button id="shutdownButton" class="control-button shutdown-btn">🔌 Shutdown</button>
-            </div>
-            <div class="control-group">
-                <button id="calibrateButton" class="control-button calibrate-btn">🎯 Calibrate</button>
-            </div>
         </div>
 
         <!-- Status Display -->
@@ -47,6 +41,11 @@
             <span id="voiceStatusText">Connecting...</span>
             <span class="status-divider">|</span>
             <span id="carStatusText">Queue: Stopped</span>
+        </div>
+
+        <div class="mode-row">
+            <span class="mode-label">Mode:</span>
+            <span id="modeIndicator" class="mode-pill regular">Regular</span>
         </div>
 
         <!-- Transcript -->
@@ -90,7 +89,8 @@
         </div>
         <div class="queue-buttons">
             <button id="clearQueueBtn" class="queue-btn clear-queue-btn">CLEAR</button>
-            <button id="resetPosBtn" class="queue-btn reset-queue-btn">RESET</button>
+            <button id="calibrateButton" class="queue-btn calibrate-queue-btn">CALIBRATE</button>
+            <button id="mlModeBtn" class="queue-btn ml-queue-btn">ML MODE</button>
         </div>
         <p class="queue-hint">Say colors to queue | Voice: "start", "stop", "clear"</p>
 
@@ -104,6 +104,8 @@
             Powered by Vosk Speech Recognition
         </div>
     </div>
+
+    <button id="shutdownButton" class="floating-shutdown-btn">🔌 Shutdown</button>
 
     <script src="{{ url_for('static', filename='js/main.js') }}"></script>
 </body>

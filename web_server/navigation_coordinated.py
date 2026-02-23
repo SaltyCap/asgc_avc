@@ -2,139 +2,200 @@
 Navigation Controller (Thin Client)
 Delegates all path planning and odometry to the C motor controller.
 """
-from typing import Optional, List
-import time
+import threading
 from dataclasses import dataclass
-from course_config import *
+
+try:
+    from course_config import CENTER, START_HEADING, START_POSITION, get_bucket_position
+except ImportError:
+    from web_server.course_config import (
+        CENTER,
+        START_HEADING,
+        START_POSITION,
+        get_bucket_position,
+    )
+
 
 @dataclass
 class NavigationCommand:
     """A queued navigation command"""
-    command_type: str  # 'bucket', 'center'
-    target: str  # color name or 'center'
+    command_type: str  # "bucket", "center"
+    target: str  # color name or "center"
     position: tuple  # (x, y)
+
 
 class CoordinatedNavigationController:
     def __init__(self, send_command_callback):
         self.send_command = send_command_callback
-        
+        self._lock = threading.RLock()
+
         # Mirror state from C process
         self.x = START_POSITION[0]
         self.y = START_POSITION[1]
         self.heading = START_HEADING
-        self.state = "IDLE" 
-        self.encoder_age_ms = 0
-        
+        self.state = "IDLE"
+
         self.command_queue = []
         self.queue_running = False
 
     def get_position(self):
         """Return current status dictionary."""
+        with self._lock:
+            queue_snapshot = [{"target": cmd.target} for cmd in self.command_queue]
+            current_target = (
+                self.command_queue[0].position
+                if (self.queue_running and self.command_queue)
+                else None
+            )
+
         return {
-            'x': self.x,
-            'y': self.y,
-            'heading': self.heading,
-            'state': self.state,
-            'mode': 'c_planning',
-            'queue_running': self.queue_running,
-            'queue': [{'target': c.target} for c in self.command_queue],
-            'current_target': self.command_queue[0].position if (self.queue_running and self.command_queue) else None
+            "x": self.x,
+            "y": self.y,
+            "heading": self.heading,
+            "state": self.state,
+            "mode": "c_planning",
+            "queue_running": self.queue_running,
+            "queue": queue_snapshot,
+            "current_target": current_target,
         }
-        
+
     def set_speed_percent(self, speed_percent: float):
         """Send speed command to C (0.0 = 0%, 1.0 = 100%)."""
-        self.send_command(f"speed {speed_percent:.2f}")
+        speed_percent = max(0.0, min(1.0, float(speed_percent)))
+        self._send_command(f"speed {speed_percent:.2f}")
 
     def go_to_center(self):
         """Queue center command."""
-        self.queue_command(NavigationCommand('center', 'CENTER', CENTER))
+        self.queue_command(NavigationCommand("center", "CENTER", CENTER))
 
     def go_to_bucket(self, color: str):
         """Queue bucket command."""
         pos = get_bucket_position(color)
         if pos:
-            self.queue_command(NavigationCommand('bucket', color.upper(), pos))
+            self.queue_command(NavigationCommand("bucket", color.upper(), pos))
+
+    def go_to_point(self, x, y):
+        """Queue point command."""
+        self.queue_command(NavigationCommand("point", f"POINT ({x:.1f}, {y:.1f})", (x, y)))
 
     # --- Queue Management ---
     def queue_command(self, cmd):
-        self.command_queue.append(cmd)
+        with self._lock:
+            self.command_queue.append(cmd)
         print(f"[NAV] Queued: {cmd.target}")
 
     def start_queue(self):
-        if not self.queue_running and self.command_queue:
-            self.queue_running = True
+        should_process = False
+        with self._lock:
+            if not self.queue_running and self.command_queue:
+                self.queue_running = True
+                should_process = True
+
+        if should_process:
             self._process_next_command()
-            
+
     def clear_queue(self):
-        self.command_queue = []
-        self.queue_running = False
-        self.send_command("stop") # Also stop C process
+        with self._lock:
+            self.command_queue = []
+            self.queue_running = False
+        self._send_command("stop")  # Also stop C process
 
     def reset_position(self, x=None, y=None, heading=None):
         """Reset position in C code."""
-        if x is None: x = START_POSITION[0]
-        if y is None: y = START_POSITION[1]
-        if heading is None: heading = START_HEADING
-        
-        self.send_command(f"setpos {x:.2f} {y:.2f} {heading:.2f}")
-        # Update local mirror immediately
-        self.x = x
-        self.y = y
-        self.heading = heading
+        if x is None:
+            x = START_POSITION[0]
+        if y is None:
+            y = START_POSITION[1]
+        if heading is None:
+            heading = START_HEADING
+
+        if self._send_command(f"setpos {x:.2f} {y:.2f} {heading:.2f}"):
+            # Update local mirror immediately
+            with self._lock:
+                self.x = x
+                self.y = y
+                self.heading = heading
 
     def calibrate(self):
         """Calibrate gyro and reset to start position."""
-        self.send_command("calibrate")
-        # Update local mirror immediately
-        self.x = START_POSITION[0]
-        self.y = START_POSITION[1]
-        self.heading = START_HEADING
+        if self._send_command("calibrate"):
+            # Update local mirror immediately
+            with self._lock:
+                self.x = START_POSITION[0]
+                self.y = START_POSITION[1]
+                self.heading = START_HEADING
 
     def _process_next_command(self):
-        if not self.command_queue:
-            self.queue_running = False
-            return
-            
-        cmd = self.command_queue[0]
-        # Send GOTO to C with bucket flag if it's a bucket target
-        if cmd.command_type == 'bucket':
-            self.send_command(f"goto {cmd.position[0]:.2f} {cmd.position[1]:.2f} 1")
-        else:
-            self.send_command(f"goto {cmd.position[0]:.2f} {cmd.position[1]:.2f} 0")
+        with self._lock:
+            if not self.queue_running:
+                return
+
+            if not self.command_queue:
+                self.queue_running = False
+                return
+
+            cmd = self.command_queue[0]
+            bucket_flag = 1 if cmd.command_type == "bucket" else 0
+            command = f"goto {cmd.position[0]:.2f} {cmd.position[1]:.2f} {bucket_flag}"
+
+            # Keep dispatch under lock so queue clear/start cannot interleave command sends.
+            if not self._send_command(command):
+                self.queue_running = False
+                print("[NAV] Failed to dispatch command because motor process is unavailable")
+                return
+
         print(f"[NAV] Executing: {cmd.target} -> {cmd.position}")
 
     # --- Feedback Handling (called from motor_interface) ---
-    
+
     def handle_status_update(self, x, y, heading, state_code):
         """Called when C prints STATUS x y h s"""
-        self.x = x
-        self.y = y
-        self.heading = heading
-        
-        # Map C state code to string
-        states = {0: "IDLE", 1: "TURNING", 2: "DRIVING", 3: "PLANNING", 
-                  4: "BUCKET_APPROACH", 5: "BUCKET_ROTATE", 6: "BUCKET_BACKUP"}
-        new_state = states.get(state_code, "UNKNOWN")
-        
-        # Check if we finished a move (transition from NON-IDLE to IDLE)
-        if self.state != "IDLE" and new_state == "IDLE" and self.queue_running:
-            # Command finished
-            if self.command_queue:
-                finished = self.command_queue.pop(0)
-                print(f"[NAV] Finished: {finished.target}")
-                
-            # Trigger next
-            if self.command_queue:
-                # Small delay? C is fast enough.
-                self._process_next_command()
-            else:
-                self.queue_running = False
-                print("[NAV] Queue Complete")
-                
-        self.state = new_state
+        finished_command = None
+        trigger_next = False
+        queue_complete = False
 
-    def update_encoder_data(self, *args):
-        pass # Ignored, C handles this now
+        with self._lock:
+            self.x = x
+            self.y = y
+            self.heading = heading
 
-    def handle_motor_complete(self, *args):
-        pass # Ignored, C handles logic
+            # Keep this mapping aligned with NavState in c_code/include/common.h.
+            states = {
+                0: "IDLE",
+                1: "TURNING",
+                2: "DRIVING",
+                3: "PLANNING",
+                4: "BUCKET_ROTATE",
+                5: "BUCKET_BACKUP",
+                6: "ML",
+            }
+            new_state = states.get(state_code, "UNKNOWN")
+            previous_state = self.state
+            self.state = new_state
+
+            # Check if we finished a move (transition from NON-IDLE to IDLE)
+            if previous_state != "IDLE" and new_state == "IDLE" and self.queue_running:
+                if self.command_queue:
+                    finished_command = self.command_queue.pop(0)
+
+                if self.command_queue:
+                    trigger_next = True
+                else:
+                    self.queue_running = False
+                    queue_complete = True
+
+        if finished_command:
+            print(f"[NAV] Finished: {finished_command.target}")
+
+        if trigger_next:
+            self._process_next_command()
+        elif queue_complete:
+            print("[NAV] Queue Complete")
+
+    def _send_command(self, command):
+        """Send command through callback; returns True on accepted command."""
+        try:
+            return bool(self.send_command(command))
+        except Exception as exc:
+            print(f"[NAV] Failed to send command '{command}': {exc}")
+            return False

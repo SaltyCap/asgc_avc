@@ -1,16 +1,28 @@
 #!/bin/bash
 # Log Viewer Launcher Script
-# Activates virtual environment and runs the log viewer
 
 cd "$(dirname "$0")"
 
-# Check if venv exists
+# Check if venv exists, create if not
 if [ ! -d "venv" ]; then
-    echo "Virtual environment not found. Creating..."
+    echo "Creating virtual environment..."
     python3 -m venv venv
-    echo "Installing dependencies..."
-    ./venv/bin/pip install pandas matplotlib
+    
+    # Activate virtual environment
+    source venv/bin/activate
+    
+    echo "Installing required packages..."
+    pip install pandas matplotlib
+else
+    # Activate existing virtual environment
+    source venv/bin/activate
 fi
 
-# Run the log viewer with venv Python
-./venv/bin/python3 log_viewer.py
+# Check if required packages are installed in venv
+if ! python -c "import pandas, matplotlib" 2>/dev/null; then
+    echo "Installing missing packages..."
+    pip install pandas matplotlib
+fi
+
+# Run the log viewer
+python log_viewer.py
