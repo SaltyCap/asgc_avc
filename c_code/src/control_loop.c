@@ -14,7 +14,7 @@
 // Motor ramping time constants.
 // Using smooth ramps prevents mechanical stress and improves control stability.
 #define RAMP_UP_TIME 1.0
-#define DECEL_ZONE_FEET 3.0
+#define DECEL_ZONE_FEET 1.0
 #define DECEL_ZONE_COUNTS ((int32_t)(DECEL_ZONE_FEET * COUNTS_PER_FOOT))
 #define STRAIGHT_SYNC_KP_NS_PER_COUNT 18
 #define STRAIGHT_SYNC_MAX_NS 25000
@@ -178,7 +178,7 @@ void* coordinated_control_thread(void* arg) {
 
                 double heading_diff = normalize_angle_diff(target_heading - odometry.heading);
                 double distance = sqrt(dx * dx + dy * dy);
-                double arrival_tolerance = nav_ctrl.is_bucket_target ? 1.5 : 0.5;
+                double arrival_tolerance = nav_ctrl.is_bucket_target ? 1.5 : 2.0;
 
                 if (distance < arrival_tolerance) {
                     if (nav_ctrl.is_bucket_target) {
@@ -372,9 +372,9 @@ void* coordinated_control_thread(void* arg) {
 
                     // Turn still in progress — scale PWM based on remaining heading error.
                     // Use encoder targets only for PWM direction (set during NAV_GOTO).
-                    double turn_scale = fabs(gyro_heading_err) / 90.0;
+                    double turn_scale = fabs(gyro_heading_err) / 40.0;
                     if (turn_scale > 1.0) turn_scale = 1.0;
-                    if (turn_scale < 0.25) turn_scale = 0.25;  // Minimum crawl to finish.
+                    if (turn_scale < 0.90) turn_scale = 0.90;  // Minimum crawl to finish.
                     int pwm_range = max_pwm_ns - NEUTRAL_NS;
                     int turn_pwm_step = (int)(pwm_range * turn_scale);
 
@@ -541,8 +541,8 @@ void* coordinated_control_thread(void* arg) {
                     double drive_heading_err = normalize_angle_diff(
                         nav_ctrl.target_heading - odometry.heading);
                     if (fabs(drive_heading_err) > 1.5) {
-                        // 500 ns per degree of error, capped.
-                        int gyro_correction = (int)(drive_heading_err * 500.0);
+                        // 1000 ns per degree of error, capped.
+                        int gyro_correction = (int)(drive_heading_err * 1000.0);
                         gyro_correction = clamp_int(gyro_correction, -STRAIGHT_SYNC_MAX_NS, STRAIGHT_SYNC_MAX_NS);
                         int motion_sign = (left_target_counts < 0 && right_target_counts < 0) ? -1 : 1;
                         next_left_pwm  -= motion_sign * gyro_correction;
