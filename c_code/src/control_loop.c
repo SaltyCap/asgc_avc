@@ -478,7 +478,7 @@ void* coordinated_control_thread(void* arg) {
                             int32_t abs_error = abs(error);
                             if (abs_error < DECEL_ZONE_COUNTS) {
                                 decel_factor = (double)abs_error / DECEL_ZONE_COUNTS;
-                                if (decel_factor < 0.2) decel_factor = 0.2;
+                                if (decel_factor < 0.65) decel_factor = 0.65;
                             }
 
                             double ramp_factor = (accel_factor < decel_factor) ? accel_factor : decel_factor;

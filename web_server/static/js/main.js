@@ -41,7 +41,7 @@ const pwmLimitSlider = document.getElementById('pwmLimitSlider');
 const pwmLimitValue = document.getElementById('pwmLimitValue');
 const pwMinValue = document.getElementById('pwMinValue');
 const pwMaxValue = document.getElementById('pwMaxValue');
-let pwmLimit = 25; // 0-100%, scales the PWM output range
+let pwmLimit = 30; // 0-100%, scales the PWM output range
 
 // PWM pulse width constants (in microseconds)
 const PW_NEUTRAL = 1500;
@@ -623,9 +623,14 @@ document.addEventListener('DOMContentLoaded', () => {
         });
     }
 
-    // Power limit slider initialization
+    // Power limit slider initialization — restore saved value (default 30%)
     if (pwmLimitSlider) {
-        pwmLimitSlider.addEventListener('input', updatePwmLimitDisplay);
+        const savedPwmLimit = parseInt(localStorage.getItem('pwmLimit') ?? '30', 10);
+        pwmLimitSlider.value = savedPwmLimit;
+        pwmLimitSlider.addEventListener('input', () => {
+            localStorage.setItem('pwmLimit', pwmLimitSlider.value);
+            updatePwmLimitDisplay();
+        });
     }
 
     // Shutdown button initialization
