@@ -577,19 +577,43 @@
         }
 
         function calibrateRobot() {
+            const btn = document.getElementById('calibrateBtn');
+            const origText = btn.textContent;
+            btn.disabled = true;
+            btn.textContent = '⏳ Calibrating...';
+
             fetch('/api/calibrate', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' }
             })
-                .then(response => response.json())
+                .then(response => {
+                    if (response.status === 401) {
+                        const next = encodeURIComponent(window.location.pathname + window.location.search);
+                        window.location.href = `/login?next=${next}`;
+                        throw new Error('Unauthorized');
+                    }
+                    if (response.status === 503) {
+                        throw new Error('Navigation not initialized');
+                    }
+                    return response.json();
+                })
                 .then(data => {
                     if (data.error) {
-                        console.error('Calibration failed:', data.error);
+                        alert(`Calibration failed: ${data.error}`);
                         return;
                     }
                     console.log('Calibration complete:', data);
                 })
-                .catch(err => console.error('Calibration error:', err));
+                .catch(err => {
+                    if (err.message !== 'Unauthorized') {
+                        console.error('Calibration error:', err);
+                        alert(`Calibration error: ${err.message}`);
+                    }
+                })
+                .finally(() => {
+                    btn.disabled = false;
+                    btn.textContent = origText;
+                });
         }
 
         function shutdownSystem() {

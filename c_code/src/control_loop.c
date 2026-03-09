@@ -542,7 +542,7 @@ void* coordinated_control_thread(void* arg) {
                         nav_ctrl.target_heading - odometry.heading);
                     if (fabs(drive_heading_err) > 1.5) {
                         // 1000 ns per degree of error, capped.
-                        int gyro_correction = (int)(drive_heading_err * 1000.0);
+                        int gyro_correction = (int)(drive_heading_err * 500.0);
                         gyro_correction = clamp_int(gyro_correction, -STRAIGHT_SYNC_MAX_NS, STRAIGHT_SYNC_MAX_NS);
                         int motion_sign = (left_target_counts < 0 && right_target_counts < 0) ? -1 : 1;
                         next_left_pwm  -= motion_sign * gyro_correction;
