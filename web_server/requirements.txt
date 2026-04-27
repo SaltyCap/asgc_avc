@@ -1,0 +1,15 @@
+# Web Framework
+Flask==3.1.2
+
+# WebSocket Support
+flask-sock==0.7.0
+
+# Speech Recognition
+vosk==0.3.44
+
+# GPIO (Pi 5 / lgpio) — pre-built system package, not on PyPI with a pre-built wheel.
+# Install by copying from system site-packages into the venv:
+#   cp /usr/lib/python3/dist-packages/lgpio.py           venv/lib/python3.13/site-packages/
+#   cp /usr/lib/python3/dist-packages/_lgpio.cpython-313-aarch64-linux-gnu.so \
+#      venv/lib/python3.13/site-packages/
+# lgpio==0.2.2.0

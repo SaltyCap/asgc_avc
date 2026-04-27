@@ -1,0 +1,131 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+    <title>PID Tuning</title>
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/tuning.css') }}">
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+</head>
+
+<body>
+    <main class="page">
+        <header class="hero">
+            <p class="eyebrow">ASGC Motion Lab</p>
+            <h1>PID Tuning Console</h1>
+            <p class="subtext">Tune turning first, then run the straight 10ft out-and-back sequence.</p>
+        </header>
+
+        <section class="status-card" aria-live="polite">
+            <div class="status-line">
+                <span class="label">Controller:</span>
+                <span id="controllerMode">pid</span>
+            </div>
+            <div class="status-line">
+                <span class="label">Test:</span>
+                <span id="activeTest">idle</span>
+            </div>
+            <div class="status-line">
+                <span class="label">Phase:</span>
+                <span id="phaseText">idle</span>
+            </div>
+            <div class="status-line">
+                <span class="label">Result:</span>
+                <span id="resultText">none</span>
+            </div>
+            <div class="status-line">
+                <span class="label">Autotune:</span>
+                <span id="autotuneStateText">idle</span>
+            </div>
+            <div class="status-line">
+                <span class="label">Best Cost:</span>
+                <span id="autotuneCostText">-</span>
+            </div>
+            <div class="status-line status-error" id="errorRow">
+                <span class="label">Error:</span>
+                <span id="errorText">none</span>
+            </div>
+            <div class="actions compact">
+                <button id="setPidModeBtn" class="primary-btn">Use PID</button>
+                <button id="setMlModeBtn" class="accent-btn">Use ML</button>
+                <button id="saveProfileBtn" class="primary-btn">Save Profile</button>
+                <button id="loadProfileBtn" class="primary-btn">Load Profile</button>
+            </div>
+            <button id="pauseAutotuneBtn" class="accent-btn" disabled>Pause Autotune</button>
+            <button id="cancelAutotuneBtn" class="danger-btn" disabled>Cancel Autotune</button>
+            <button id="stopTestBtn" class="danger-btn">STOP TEST</button>
+        </section>
+
+        <section class="panel">
+            <h2>Live Telemetry</h2>
+            <p class="panel-note">Real-time heading response vs. target.</p>
+            <div style="width: 100%; height: 300px; position: relative;">
+                <canvas id="telemetryChart"></canvas>
+            </div>
+        </section>
+
+        <section class="panel">
+            <h2>1. Turning Tuning</h2>
+            <p class="panel-note">Recommended first pass: +90 deg then -90 deg.</p>
+            <div class="grid">
+                <label>Kp <input id="turnKp" type="number" step="0.01" min="0"></label>
+                <label>Ki <input id="turnKi" type="number" step="0.01" min="0"></label>
+                <label>Kd vel <input id="turnKd" type="number" step="0.01" min="0"></label>
+                <label>Ka accel <input id="turnKa" type="number" step="0.001" min="0"></label>
+                <label>V stop <input id="turnVstop" type="number" step="1" min="0"></label>
+                <label>Angle deg <input id="turnAngle" type="number" step="1" min="10" max="180" value="90"></label>
+            </div>
+            <div class="actions">
+                <button id="saveTurnBtn" class="primary-btn">Apply Turning PID</button>
+                <button id="runTurnBtn" class="accent-btn">Run Turning Test</button>
+                <button id="autotuneTurnBtn" class="accent-btn">Autotune Turn</button>
+            </div>
+        </section>
+
+        <section class="panel">
+            <h2>2. Straight Tuning</h2>
+            <p class="panel-note">Test flow: reset pose, drive forward 10ft, turn 180, drive back 10ft.</p>
+            <div class="grid">
+                <label>Kp <input id="driveKp" type="number" step="0.01" min="0"></label>
+                <label>Ki <input id="driveKi" type="number" step="0.01" min="0"></label>
+                <label>Kd vel <input id="driveKd" type="number" step="0.01" min="0"></label>
+                <label>Ka accel <input id="driveKa" type="number" step="0.001" min="0"></label>
+                <label>V stop <input id="driveVstop" type="number" step="1" min="0"></label>
+            </div>
+            <div class="actions">
+                <button id="saveDriveBtn" class="primary-btn">Apply Straight PID</button>
+                <button id="runDriveBtn" class="accent-btn">Run 10ft Out-and-Back</button>
+                <button id="autotuneDriveBtn" class="accent-btn">Autotune Straight</button>
+            </div>
+        </section>
+
+        <section class="panel">
+            <h2>PWM / Speed Limit</h2>
+            <p class="panel-note">Scales motor power on all pages. Changes apply immediately.</p>
+            <div class="pwm-slider-row">
+                <span class="pwm-pct-label" id="pwmLimitValue">25%</span>
+                <input type="range" id="pwmLimitSlider" class="pwm-range" min="0" max="100" value="25" step="5">
+            </div>
+            <div class="pwm-info-row">
+                <span>Min: <strong id="pwMinValue">1375</strong> µs</span>
+                <span>Center: <strong>1500</strong> µs</span>
+                <span>Max: <strong id="pwMaxValue">1625</strong> µs</span>
+            </div>
+            <div class="pwm-conn-row">
+                <span id="pwmConnStatus" class="pwm-conn-dot"></span>
+                <span id="pwmConnText" class="pwm-conn-text">Connecting…</span>
+            </div>
+        </section>
+
+        <nav class="nav-row">
+            <a href="/" class="nav-link">Voice</a>
+            <a href="/course" class="nav-link">Course</a>
+            <a href="/joystick" class="nav-link">Joystick</a>
+        </nav>
+    </main>
+
+    <script src="{{ url_for('static', filename='js/tuning.js') }}"></script>
+</body>
+
+</html>

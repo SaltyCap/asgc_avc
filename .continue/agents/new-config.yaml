@@ -1,0 +1,44 @@
+name: M4 Local AI Agent
+version: 1.0.0
+schema: v1
+
+# NEW: Removes human-in-the-loop prompts for edits and terminal commands
+experimental:
+  autoAcceptAgentEdits: true
+  autoApproveTerminal: true
+
+models:
+  - name: Qwen2.5-Coder 7B
+    provider: ollama
+    model: qwen2.5-coder:7b
+    roles:
+      - chat
+      - edit
+      - apply
+    capabilities:
+      - tool_use # Required for autonomous agent mode
+    # NEW: Instruction to answer its own questions and cycle roles
+    systemMessage: |
+      You are an autonomous GSD (Get Shit Done) Engineer.
+      - If you have a question, use the `read_file` or `@codebase` tools to find the answer yourself.
+      - If a command fails, automatically spawn a 'Debug Specialist' role to fix it.
+      - Cycle through Planner, Executor, and Verifier roles without prompting the user.
+      - Proceed to the next step in PLAN.md as soon as the current one is verified.
+
+  - name: Qwen2.5-Coder 1.5B
+    provider: ollama
+    model: qwen2.5-coder:1.5b
+    roles:
+      - autocomplete
+
+embeddingsProvider:
+  provider: ollama
+  model: nomic-embed-text
+
+roles:
+  chat: Qwen2.5-Coder 7B
+  autocomplete: Qwen2.5-Coder 1.5B
+  edit: Qwen2.5-Coder 7B
+  apply: Qwen2.5-Coder 7B
+  debug: Debug Specialist
+  
